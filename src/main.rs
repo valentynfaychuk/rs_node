@@ -1,6 +1,9 @@
 use std::net::UdpSocket;
 use std::time::Duration;
 
+mod proto;
+mod proto_enc;
+
 fn main() -> std::io::Result<()> {
     // Target UDP address of an Amadeus node.
     let addr = std::env::var("UDP_ADDR").unwrap_or_else(|_| "127.0.0.1:36969".to_string());
