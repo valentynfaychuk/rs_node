@@ -56,7 +56,8 @@ fn main() -> std::io::Result<()> {
     socket.send_to(&t1, &addr)?;
 
     println!("sent");
-
+ 
+    for _ in 1..10 {
     // Wait for a response from the node.
     let mut buf = [0u8; 65535];
     let (len, src) = socket.recv_from(&mut buf)?;
@@ -70,6 +71,7 @@ fn main() -> std::io::Result<()> {
             println!("{:?}", proto_enc::parse_nodeproto(&a.payload));
         }
         _ => {}
+    }
     }
     Ok(())
 }
