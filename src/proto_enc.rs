@@ -247,7 +247,6 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
     })
 }
 
-
 #[derive(Debug)]
 pub enum EncodeError {
     VersionFormat,
@@ -258,19 +257,27 @@ pub enum EncodeError {
 
 fn version_triplet_bytes(v: &str) -> Result<[u8; 3], EncodeError> {
     let parts: Vec<&str> = v.split('.').collect();
-    if parts.len() != 3 { return Err(EncodeError::VersionFormat); }
+    if parts.len() != 3 {
+        return Err(EncodeError::VersionFormat);
+    }
     let mut out = [0u8; 3];
     for (i, p) in parts.iter().enumerate() {
         let n: i64 = p.parse().map_err(|_| EncodeError::VersionFormat)?;
-        if !(0..=255).contains(&n) { return Err(EncodeError::VersionOutOfRange); }
+        if !(0..=255).contains(&n) {
+            return Err(EncodeError::VersionOutOfRange);
+        }
         out[i] = n as u8;
     }
     Ok(out)
 }
 
 pub fn encode_message_v2(m: &MessageV2) -> Result<Vec<u8>, EncodeError> {
-    if m.pk.len() != 48 { return Err(EncodeError::BadPkLen(m.pk.len())); }
-    if m.signature.len() != 96 { return Err(EncodeError::BadSigLen(m.signature.len())); }
+    if m.pk.len() != 48 {
+        return Err(EncodeError::BadPkLen(m.pk.len()));
+    }
+    if m.signature.len() != 96 {
+        return Err(EncodeError::BadSigLen(m.signature.len()));
+    }
     let ver = version_triplet_bytes(&m.version)?;
 
     // 3 + 3 + 1 + 48 + 96 + 2 + 2 + 8 + 4 + payload

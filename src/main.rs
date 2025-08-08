@@ -1,6 +1,7 @@
 use std::net::UdpSocket;
 use std::time::Duration;
 
+mod genesis;
 mod proto;
 mod proto_enc;
 
@@ -42,7 +43,6 @@ fn main() -> std::io::Result<()> {
     let t1 = proto_enc::encode_message_v2(&ping).expect("should encode");
     //println!("{:?}", msg);
     println!("{:?}", t1);
-
 
     // Target UDP address of an Amadeus node.
     let addr = std::env::var("UDP_ADDR").unwrap_or_else(|_| "127.0.0.1:36969".to_string());
