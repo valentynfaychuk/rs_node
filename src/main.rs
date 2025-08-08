@@ -56,22 +56,22 @@ fn main() -> std::io::Result<()> {
     socket.send_to(&t1, &addr)?;
 
     println!("sent");
- 
-    for _ in 1..10 {
-    // Wait for a response from the node.
-    let mut buf = [0u8; 65535];
-    let (len, src) = socket.recv_from(&mut buf)?;
-    println!("received {} bytes from {}", len, src);
 
-    let data = &buf[..len];
-    println!("{:?}", data);
-    let unpacked = proto_enc::unpack_message_v2(&data);
-    match unpacked {
-        Ok(a) => {
-            println!("{:?}", proto_enc::parse_nodeproto(&a.payload));
+    for _ in 1..1000 {
+        // Wait for a response from the node.
+        let mut buf = [0u8; 65535];
+        let (len, src) = socket.recv_from(&mut buf)?;
+        println!("received {} bytes from {}", len, src);
+
+        let data = &buf[..len];
+        // println!("{:?}", data);
+        let unpacked = proto_enc::unpack_message_v2(&data);
+        match unpacked {
+            Ok(a) => {
+                println!("{:?}", proto_enc::parse_nodeproto(&a.payload));
+            }
+            _ => {}
         }
-        _ => {}
-    }
     }
     Ok(())
 }

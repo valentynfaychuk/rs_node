@@ -67,8 +67,6 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
         _ => return Err(ParseError::WrongType("map")),
     };
 
-    println!("{:?}", &map);
-
     // `op` determines the variant.
     let op_atom = map
         .get(&Term::Atom(Atom::from("op")))
@@ -119,7 +117,10 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
             Ok(NodeProto::Peers(Peers { ips }))
         }
         "solicit_entry2" => Ok(NodeProto::SolicitEntry2(SolicitEntry2)),
-        _ => Err(ParseError::WrongType("op")),
+        _ => {
+            println!("{:?}", &map);
+            Err(ParseError::WrongType("op"))
+        }
     }
 }
 
