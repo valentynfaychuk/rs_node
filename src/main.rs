@@ -64,6 +64,7 @@ fn main() -> std::io::Result<()> {
 
     let data = &buf[..len];
     println!("{:?}",data);
-    println!("{:?}", proto_enc::parse_nodeproto(&data));
+    let unpacked = proto_enc::unpack_message_v2(&data);
+    println!("{:?}", unpacked);
     Ok(())
 }
