@@ -65,13 +65,17 @@ fn main() -> std::io::Result<()> {
 
         let data = &buf[..len];
         // println!("{:?}", data);
-        let unpacked = proto_enc::unpack_message_v2(&data);
-        match unpacked {
-            Ok(a) => {
-                println!("{:?}", proto_enc::parse_nodeproto(&a.payload));
+        let unpacked = proto_enc::unpack_message_v2(&data).map(|m| {
+            let x = proto_enc::parse_nodeproto(&m.payload);
+
+            match x {
+                Ok(proto::NodeProto::Ping(_)) => {}
+                Ok(a) => {
+                    println!("{:?}", a);
+                }
+                _ => {}
             }
-            _ => {}
-        }
+        });
     }
     Ok(())
 }
