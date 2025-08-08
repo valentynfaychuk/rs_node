@@ -63,8 +63,14 @@ fn main() -> std::io::Result<()> {
     println!("received {} bytes from {}", len, src);
 
     let data = &buf[..len];
-    println!("{:?}",data);
+    println!("{:?}", data);
     let unpacked = proto_enc::unpack_message_v2(&data);
-    println!("{:?}", unpacked);
+    match unpacked {
+        Ok(a) => {
+            println!("{:?}", proto_enc::parse_nodeproto(&a.payload));
+
+        }
+        _ => {}
+    }
     Ok(())
 }
