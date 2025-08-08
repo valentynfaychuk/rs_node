@@ -251,6 +251,7 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
     })
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum EncodeError {
     VersionFormat,

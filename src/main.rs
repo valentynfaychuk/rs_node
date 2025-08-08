@@ -53,7 +53,7 @@ fn main() -> std::io::Result<()> {
     socket.set_read_timeout(Some(Duration::from_secs(5)))?;
 
     // Send a simple ping message to the node.
-    socket.send_to(&t1, &addr)?;
+    socket.send_to(&PING, &addr)?;
 
     println!("sent");
 

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Top-level message enumeration.
 #[derive(Debug)]
 pub enum NodeProto {
