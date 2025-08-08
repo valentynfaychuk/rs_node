@@ -2,7 +2,6 @@ use crate::proto::*;
 use eetf::DecodeError;
 use eetf::convert::TryAsRef;
 use eetf::{Atom, Term};
-use flate2::read::DeflateDecoder;
 use std::{error::Error, fmt};
 
 #[derive(Debug)]
@@ -49,24 +48,6 @@ impl Error for ParseError {
         }
     }
 }
-
-use flate2::Decompress;
-use flate2::FlushDecompress;
-use flate2::Status;
-
-/*
-pub fn deflate_decompress(compressed: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut inflater = Decompress::new_with_window_bits(false, -15);
-    let mut out = Vec::with_capacity(compressed.len() * 4);
-
-    let status = inflater.decompress_vec(compressed, &mut out, FlushDecompress::Finish)?;
-    if status != Status::StreamEnd {
-        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "stream not complete"));
-    }
-
-    Ok(out)
-}
-*/
 
 use miniz_oxide::inflate::decompress_to_vec;
 
@@ -167,7 +148,7 @@ fn parse_entry_summary(term: Option<&Term>) -> Result<EntrySummary, ParseError> 
     })
 }
 
-use eetf::{Binary, ByteList, FixInteger, List};
+use eetf::{Binary, List};
 use num_traits::ToPrimitive; // already pulled by eetf
 
 /// Lightweight helpers so you can keep calling `.atom()`, `.integer()`, etc.
@@ -212,18 +193,6 @@ impl TermExt for Term {
             None
         }
     }
-}
-
-#[derive(Debug)]
-pub struct MessageV2 {
-    pub version: String,
-    pub pk: Vec<u8>,
-    pub signature: Vec<u8>,
-    pub shard_index: u16,
-    pub shard_total: u16,
-    pub ts_nano: u64,
-    pub original_size: u32,
-    pub payload: Vec<u8>,
 }
 
 pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
@@ -276,4 +245,62 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
         original_size,
         payload,
     })
+}
+
+
+#[derive(Debug)]
+pub enum EncodeError {
+    VersionFormat,
+    VersionOutOfRange,
+    BadPkLen(usize),
+    BadSigLen(usize),
+}
+
+fn version_triplet_bytes(v: &str) -> Result<[u8; 3], EncodeError> {
+    let parts: Vec<&str> = v.split('.').collect();
+    if parts.len() != 3 { return Err(EncodeError::VersionFormat); }
+    let mut out = [0u8; 3];
+    for (i, p) in parts.iter().enumerate() {
+        let n: i64 = p.parse().map_err(|_| EncodeError::VersionFormat)?;
+        if !(0..=255).contains(&n) { return Err(EncodeError::VersionOutOfRange); }
+        out[i] = n as u8;
+    }
+    Ok(out)
+}
+
+pub fn encode_message_v2(m: &MessageV2) -> Result<Vec<u8>, EncodeError> {
+    if m.pk.len() != 48 { return Err(EncodeError::BadPkLen(m.pk.len())); }
+    if m.signature.len() != 96 { return Err(EncodeError::BadSigLen(m.signature.len())); }
+    let ver = version_triplet_bytes(&m.version)?;
+
+    // 3 + 3 + 1 + 48 + 96 + 2 + 2 + 8 + 4 + payload
+    let mut out = Vec::with_capacity(3 + 3 + 1 + 48 + 96 + 2 + 2 + 8 + 4 + m.payload.len());
+
+    // "AMA"
+    out.extend_from_slice(b"AMA");
+
+    // version_3byte
+    out.extend_from_slice(&ver);
+
+    // 0::7, 1::1 → one byte with LSB set
+    out.push(0b0000_0001);
+
+    // pk (48), signature (96)
+    out.extend_from_slice(&m.pk);
+    out.extend_from_slice(&m.signature);
+
+    // shard_index::16, shard_total::16 (big-endian)
+    out.extend_from_slice(&m.shard_index.to_be_bytes());
+    out.extend_from_slice(&m.shard_total.to_be_bytes());
+
+    // ts_n::64 (big-endian)
+    out.extend_from_slice(&m.ts_nano.to_be_bytes());
+
+    // original_size::32 (big-endian)
+    out.extend_from_slice(&m.original_size.to_be_bytes());
+
+    // msg_compressed_or_shard::binary (rest)
+    out.extend_from_slice(&m.payload);
+
+    Ok(out)
 }

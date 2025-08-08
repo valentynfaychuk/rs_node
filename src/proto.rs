@@ -112,3 +112,27 @@ pub struct SolicitEntry {
 
 #[derive(Debug)]
 pub struct SolicitEntry2;
+
+// udp transport headers:
+
+//<<"AMA",                   # 3 bytes magic
+//  version_3byte::3-binary, # 3 bytes version triplet
+//  0::7, 1::1,              # 7 bits zero + 1 bit flag
+//  pk::48-binary,           # 48 bytes public key
+//  signature::96-binary,    # 96 bytes signature
+//  shard_index::16,         # u16
+//  shard_total::16,         # u16
+//  ts_n::64,                # u64
+//  original_size::32,       # u32
+//  msg_compressed_or_shard::binary>>  # rest of the bytes
+#[derive(Debug)]
+pub struct MessageV2 {
+    pub version: String,
+    pub pk: Vec<u8>,
+    pub signature: Vec<u8>,
+    pub shard_index: u16,
+    pub shard_total: u16,
+    pub ts_nano: u64,
+    pub original_size: u32,
+    pub payload: Vec<u8>,
+}
