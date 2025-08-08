@@ -61,5 +61,6 @@ fn main() -> std::io::Result<()> {
     let mut buf = [0u8; 65535];
     let (len, src) = socket.recv_from(&mut buf)?;
     println!("received {} bytes from {}", len, src);
+    println!("{:?}", proto_enc::parse_nodeproto(&buf));
     Ok(())
 }
