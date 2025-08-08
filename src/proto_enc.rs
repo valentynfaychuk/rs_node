@@ -136,15 +136,15 @@ fn parse_entry_summary(term: Option<&Term>) -> Result<EntrySummary, ParseError> 
         .get(&Term::Atom(Atom::from("signature")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("signature"))?;
-    let mask = map
-        .get(&Term::Atom(Atom::from("mask")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("mask"))?;
 
+let mask = map
+    .get(&Term::Atom(Atom::from("mask")))
+    .and_then(|t| t.binary())
+    .map(|b| b.to_vec());
     Ok(EntrySummary {
         header: header.to_vec(),
         signature: signature.to_vec(),
-        mask: mask.to_vec(),
+        mask,
     })
 }
 

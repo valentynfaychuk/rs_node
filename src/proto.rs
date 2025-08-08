@@ -25,7 +25,7 @@ pub enum NodeProto {
 pub struct EntrySummary {
     pub header: Vec<u8>,
     pub signature: Vec<u8>,
-    pub mask: Vec<u8>,
+    pub mask: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]

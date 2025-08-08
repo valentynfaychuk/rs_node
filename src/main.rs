@@ -68,7 +68,6 @@ fn main() -> std::io::Result<()> {
     match unpacked {
         Ok(a) => {
             println!("{:?}", proto_enc::parse_nodeproto(&a.payload));
-
         }
         _ => {}
     }
