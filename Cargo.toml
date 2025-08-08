@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 eetf = "0.10.0"
-flate2 = "1.0"
 num-traits = "0.2.19"
+flate2 = { version = "1.0.25", features = ["zlib"] }
+miniz_oxide = "0.8.9"
