@@ -63,6 +63,7 @@ fn main() -> std::io::Result<()> {
     println!("received {} bytes from {}", len, src);
 
     let data = &buf[..len];
+    println!("{:?}",data);
     println!("{:?}", proto_enc::parse_nodeproto(&data));
     Ok(())
 }
