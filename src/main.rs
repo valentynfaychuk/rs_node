@@ -65,7 +65,7 @@ fn main() -> std::io::Result<()> {
 
         let data = &buf[..len];
         // println!("{:?}", data);
-        let unpacked = proto_enc::unpack_message_v2(&data).map(|m| {
+        let _unpacked = proto_enc::unpack_message_v2(&data).map(|m| {
             let x = proto_enc::parse_nodeproto(&m.payload);
 
             match x {
