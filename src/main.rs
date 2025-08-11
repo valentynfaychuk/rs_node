@@ -64,8 +64,8 @@ async fn recv_loop(socket: &UdpSocket, app_state: AppState) -> std::io::Result<(
                             // record the peer as seen on ANY successfully parsed message
                             let last_msg = variant_tag(&msg).to_string();
                             // kind is unknown here; pass None unless you can infer it
-                             let pk_str = bs58::encode(&m.pk).into_string();
-                             app_state.seen_peer(src, Some(pk_str), Some(last_msg)).await;
+                            let pk_str = bs58::encode(&m.pk).into_string();
+                            app_state.seen_peer(src, Some(pk_str), Some(last_msg)).await;
 
                             // keep your prints (optional: skip Ping spam)
                             if !matches!(msg, proto::NodeProto::Ping(_)) {

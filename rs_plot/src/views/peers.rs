@@ -54,8 +54,9 @@ function esc(s) {{
 
 pub fn rows(peers: &HashMap<SocketAddr, PeerInfo>) -> String {
     // snapshot & sort newest first
+    
     let mut v: Vec<&PeerInfo> = peers.values().collect();
-    v.sort_by_key(|p| std::cmp::Reverse(p.last_seen_ms));
+    v.sort_by(|a, b| a.sk.as_deref().cmp(&b.sk.as_deref()));
 
     let mut s = String::with_capacity(v.len() * 96);
     for p in v {
@@ -71,9 +72,8 @@ pub fn rows(peers: &HashMap<SocketAddr, PeerInfo>) -> String {
                <td><span class=\"muted\">{}</span></td>\
              </tr>",
             esc_opt(&p.sk),
-            esc(&p.addr.to_string()),                 // assuming PeerInfo.addr: String
-                                                      "",
-
+            esc(&p.addr.to_string()),
+            "",
             esc_opt(&p.last_msg),
             p.last_seen_ms,
             "", //esc_opt(&p.sk),
