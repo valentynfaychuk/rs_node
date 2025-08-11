@@ -70,9 +70,10 @@ pub fn rows(peers: &HashMap<SocketAddr, PeerInfo>) -> String {
                <td>{}</td>\
                <td><span class=\"muted\">{}</span></td>\
              </tr>",
-            esc(""),
+            esc_opt(&p.sk),
             esc(&p.addr.to_string()),                 // assuming PeerInfo.addr: String
-            esc_opt(&p.kind),
+                                                      "",
+
             esc_opt(&p.last_msg),
             p.last_seen_ms,
             "", //esc_opt(&p.sk),

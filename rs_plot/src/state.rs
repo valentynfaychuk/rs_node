@@ -13,7 +13,7 @@ use std::{
 pub struct PeerInfo {
     pub addr: SocketAddr,
     pub last_seen_ms: u64,
-    pub kind: Option<String>,      // "full", "light", etc. If you can infer.
+    pub sk: Option<String>,      // "full", "light", etc. If you can infer.
     pub last_msg: Option<String>,  // e.g. "Ping", "Pong", "AttestationBulk"
 
 }
@@ -43,20 +43,20 @@ impl AppState {
     pub async fn seen_peer<S1: Into<Option<String>>, S2: Into<Option<String>>>(
         &self,
         addr: SocketAddr,
-        kind: S1,
+        sk: S1,
         last_msg: S2,
     ) {
         let mut map = self.peers.write().await;
         let entry = map.entry(addr).or_insert_with(|| PeerInfo {
             addr,
             last_seen_ms: Self::now_ms(),
-            kind: None,
+            sk: None,
             last_msg: None,
         });
         entry.last_seen_ms = Self::now_ms();
-        if let Some(k) = kind.into() {
+        if let Some(k) = sk.into() {
             if !k.is_empty() {
-                entry.kind = Some(k);
+                entry.sk = Some(k);
             }
         }
         if let Some(m) = last_msg.into() {
