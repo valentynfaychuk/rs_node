@@ -1,6 +1,6 @@
-mod models;
+pub mod models;
 mod routes;
-mod state;
+pub mod state;
 mod views {
     pub mod entries;
     pub mod entry;
@@ -11,10 +11,8 @@ mod views {
 use axum::{response::Html, routing::get};
 use state::AppState;
 
-pub async fn serve(addr: &str) -> anyhow::Result<()> {
+pub async fn serve(addr: &str, state: &AppState) -> anyhow::Result<()> {
     // demo data
-    let state = AppState::new();
-
     let app = routes::app(state.clone())
         // simple home page that links to sections
         .route(

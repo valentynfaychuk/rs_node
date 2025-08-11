@@ -8,7 +8,7 @@ use core::proto;
 use core::proto_enc;
 use core::test_data::ping::PING;
 
-use rs_plot::serve;
+use rs_plot::{serve, state::AppState};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -25,16 +25,19 @@ async fn main() -> std::io::Result<()> {
     socket.send_to(&PING, &addr).await?;
     println!("sent");
 
+    let app_state = rs_plot::state::AppState::new();
+
+    let s1 = app_state.clone();
     // --- spawn HTTP server ---
-    let http = tokio::spawn(async {
-        if let Err(e) = serve("0.0.0.0:3000").await {
+    let http = tokio::spawn(async move {
+        if let Err(e) = serve("0.0.0.0:3000", &s1).await {
             eprintln!("server error: {e}");
         }
     });
 
     // --- run UDP recv loop concurrently ---
     let udp = tokio::spawn(async move {
-        if let Err(e) = recv_loop(&socket).await {
+        if let Err(e) = recv_loop(&socket, app_state).await {
             eprintln!("udp loop error: {e}");
         }
     });
@@ -45,7 +48,7 @@ async fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-async fn recv_loop(socket: &UdpSocket) -> std::io::Result<()> {
+async fn recv_loop(socket: &UdpSocket, app_state: AppState) -> std::io::Result<()> {
     let mut buf = vec![0u8; 65_535];
 
     loop {
