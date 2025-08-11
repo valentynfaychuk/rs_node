@@ -69,10 +69,10 @@ pub struct Entry {
 
 #[derive(Debug, Clone)]
 pub struct Attestation {
-    pub entry_hash: Vec<u8>,       // 32 bytes
-    pub mutations_hash: Vec<u8>,   // 32 bytes
-    pub signature: Vec<u8>,        // 96 bytes
-    pub signer: Vec<u8>,           // 48 bytes
+    pub entry_hash: Vec<u8>,     // 32 bytes
+    pub mutations_hash: Vec<u8>, // 32 bytes
+    pub signature: Vec<u8>,      // 96 bytes
+    pub signer: Vec<u8>,         // 48 bytes
 }
 
 #[derive(Debug, Clone)]

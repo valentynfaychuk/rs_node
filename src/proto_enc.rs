@@ -64,30 +64,39 @@ fn map_term_to_map(term: &Term) -> Result<std::collections::HashMap<Term, Term>,
 }
 
 fn parse_attestation_from_bin(bin: &[u8]) -> Result<Attestation, ParseError> {
-    let t = Term::decode(bin)?;                // nested ETF
-    let m = map_term_to_map(&t)?;              // as HashMap<Term, Term>
+    let t = Term::decode(bin)?; // nested ETF
+    let m = map_term_to_map(&t)?; // as HashMap<Term, Term>
 
-    let entry_hash = m.get(&Term::Atom(Atom::from("entry_hash")))
+    let entry_hash = m
+        .get(&Term::Atom(Atom::from("entry_hash")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("entry_hash"))?
         .to_vec();
 
-    let mutations_hash = m.get(&Term::Atom(Atom::from("mutations_hash")))
+    let mutations_hash = m
+        .get(&Term::Atom(Atom::from("mutations_hash")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("mutations_hash"))?
         .to_vec();
 
-    let signature = m.get(&Term::Atom(Atom::from("signature")))
+    let signature = m
+        .get(&Term::Atom(Atom::from("signature")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("signature"))?
         .to_vec();
 
-    let signer = m.get(&Term::Atom(Atom::from("signer")))
+    let signer = m
+        .get(&Term::Atom(Atom::from("signer")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("signer"))?
         .to_vec();
 
-    Ok(Attestation { entry_hash, mutations_hash, signature, signer })
+    Ok(Attestation {
+        entry_hash,
+        mutations_hash,
+        signature,
+        signer,
+    })
 }
 /// Parse any NodeProto message.
 pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
@@ -150,10 +159,6 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
             Ok(NodeProto::Peers(Peers { ips }))
         }
         "solicit_entry2" => Ok(NodeProto::SolicitEntry2(SolicitEntry2)),
-        _ => {
-            println!("{:?}", &map);
-            Err(ParseError::WrongType("op"))
-        }
         "attestation_bulk" => {
             let list = map
                 .get(&Term::Atom(Atom::from("attestations_packed")))
@@ -170,6 +175,10 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
             }
 
             Ok(NodeProto::AttestationBulk(AttestationBulk { attestations }))
+        }
+        _ => {
+            println!("{:?}", &map);
+            Err(ParseError::WrongType("op"))
         }
     }
 }
