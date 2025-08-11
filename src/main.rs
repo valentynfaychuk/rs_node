@@ -3,11 +3,12 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-mod genesis;
-mod proto;
-mod proto_enc;
-mod test_data;
-use test_data::ping::PING;
+use core::genesis;
+use core::proto;
+use core::proto_enc;
+use core::test_data::ping::PING;
+
+use rs_plot::serve;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -24,8 +25,24 @@ async fn main() -> std::io::Result<()> {
     socket.send_to(&PING, &addr).await?;
     println!("sent");
 
-    // Run the async handler loop (Ctrl+C to quit).
-    recv_loop(&socket).await
+    // --- spawn HTTP server ---
+    let http = tokio::spawn(async {
+        if let Err(e) = serve("0.0.0.0:3000").await {
+            eprintln!("server error: {e}");
+        }
+    });
+
+    // --- run UDP recv loop concurrently ---
+    let udp = tokio::spawn(async move {
+        if let Err(e) = recv_loop(&socket).await {
+            eprintln!("udp loop error: {e}");
+        }
+    });
+
+    // Wait for either task to finish (or join both if you prefer)
+    let _ = tokio::try_join!(http, udp);
+
+    Ok(())
 }
 
 async fn recv_loop(socket: &UdpSocket) -> std::io::Result<()> {

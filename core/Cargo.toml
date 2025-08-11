@@ -1,5 +1,5 @@
 [package]
-name = "rs"
+name = "core"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,6 +11,4 @@ miniz_oxide = "0.8.9"
 ratatui = "0.29.0"
 tokio = { version = "1.47.1", features = ["full"] }
 bs58 = "0.5.1"
-rs_plot = { path = "./rs_plot" }
-core = { path = "./core" }
 anyhow = "1.0.98"

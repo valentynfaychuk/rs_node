@@ -136,15 +136,15 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
                 .ok_or(ParseError::Missing("ts_m"))?;
             Ok(NodeProto::Pong(Pong { ts_m }))
         }
-"entry" => {
-    let bin = map
-        .get(&Term::Atom(Atom::from("entry_packed")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("entry_packed"))?;
+        "entry" => {
+            let bin = map
+                .get(&Term::Atom(Atom::from("entry_packed")))
+                .and_then(|t| t.binary())
+                .ok_or(ParseError::Missing("entry_packed"))?;
 
-    let entry = parse_entry_from_bin(bin)?;
-    Ok(NodeProto::Entry(entry))
-}
+            let entry = parse_entry_from_bin(bin)?;
+            Ok(NodeProto::Entry(entry))
+        }
         "who_are_you" => Ok(NodeProto::WhoAreYou(WhoAreYou)),
         "txpool" => {
             let txs = map
@@ -392,39 +392,47 @@ fn parse_header_from_bin(bin: &[u8]) -> Result<EntryHeader, ParseError> {
         _ => return Err(ParseError::WrongType("header map")),
     };
 
-    let slot = map.get(&Term::Atom(Atom::from("slot")))
+    let slot = map
+        .get(&Term::Atom(Atom::from("slot")))
         .and_then(|t| t.integer())
         .ok_or(ParseError::Missing("slot"))?;
 
-    let dr = map.get(&Term::Atom(Atom::from("dr")))
+    let dr = map
+        .get(&Term::Atom(Atom::from("dr")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("dr"))?
         .to_vec();
 
-    let height = map.get(&Term::Atom(Atom::from("height")))
+    let height = map
+        .get(&Term::Atom(Atom::from("height")))
         .and_then(|t| t.integer())
         .ok_or(ParseError::Missing("height"))?;
 
-    let prev_hash = map.get(&Term::Atom(Atom::from("prev_hash")))
+    let prev_hash = map
+        .get(&Term::Atom(Atom::from("prev_hash")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("prev_hash"))?
         .to_vec();
 
-    let prev_slot = map.get(&Term::Atom(Atom::from("prev_slot")))
+    let prev_slot = map
+        .get(&Term::Atom(Atom::from("prev_slot")))
         .and_then(|t| t.integer())
         .ok_or(ParseError::Missing("prev_slot"))?;
 
-    let signer = map.get(&Term::Atom(Atom::from("signer")))
+    let signer = map
+        .get(&Term::Atom(Atom::from("signer")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("signer"))?
         .to_vec();
 
-    let txs_hash = map.get(&Term::Atom(Atom::from("txs_hash")))
+    let txs_hash = map
+        .get(&Term::Atom(Atom::from("txs_hash")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("txs_hash"))?
         .to_vec();
 
-    let vr = map.get(&Term::Atom(Atom::from("vr")))
+    let vr = map
+        .get(&Term::Atom(Atom::from("vr")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("vr"))?
         .to_vec();
@@ -447,24 +455,32 @@ fn parse_entry_from_bin(bin: &[u8]) -> Result<Entry, ParseError> {
         _ => return Err(ParseError::WrongType("entry")),
     };
 
-    let hash = m.get(&Term::Atom(Atom::from("hash")))
+    let hash = m
+        .get(&Term::Atom(Atom::from("hash")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("hash"))?
         .to_vec();
 
-    let header_bin = m.get(&Term::Atom(Atom::from("header")))
+    let header_bin = m
+        .get(&Term::Atom(Atom::from("header")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("header"))?;
     let header = parse_header_from_bin(header_bin)?;
 
-    let signature = m.get(&Term::Atom(Atom::from("signature")))
+    let signature = m
+        .get(&Term::Atom(Atom::from("signature")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("signature"))?
         .to_vec();
 
-    let txs = m.get(&Term::Atom(Atom::from("txs")))
+    let txs = m
+        .get(&Term::Atom(Atom::from("txs")))
         .and_then(|t| t.list())
-        .map(|l| l.iter().filter_map(|t| t.binary().map(|b| b.to_vec())).collect())
+        .map(|l| {
+            l.iter()
+                .filter_map(|t| t.binary().map(|b| b.to_vec()))
+                .collect()
+        })
         .unwrap_or_default();
 
     Ok(Entry {

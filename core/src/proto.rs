@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use std::fmt;
 use bs58;
+use std::fmt;
 
 /// Top-level message enumeration.
 #[derive(Debug)]
@@ -39,10 +39,10 @@ pub struct EntryHeader {
 
 #[derive(Debug, Clone)]
 pub struct Entry {
-    pub hash: Vec<u8>,            // 32 bytes
-    pub header: EntryHeader,      // nested decoded header
-    pub signature: Vec<u8>,       // 96 bytes
-    pub txs: Vec<Vec<u8>>,        // list of tx binaries (can be empty)
+    pub hash: Vec<u8>,       // 32 bytes
+    pub header: EntryHeader, // nested decoded header
+    pub signature: Vec<u8>,  // 96 bytes
+    pub txs: Vec<Vec<u8>>,   // list of tx binaries (can be empty)
 }
 
 /// Shared summary of an entry’s tip.
@@ -175,5 +175,3 @@ pub struct MessageV2 {
     pub original_size: u32,
     pub payload: Vec<u8>,
 }
-
-
