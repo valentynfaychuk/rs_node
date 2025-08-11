@@ -41,14 +41,17 @@ async fn recv_loop(socket: &UdpSocket) -> std::io::Result<()> {
             }
             Ok(Err(e)) => return Err(e),
             Ok(Ok((len, src))) => {
-                println!("received {} bytes from {}", len, src);
                 let data = &buf[..len];
 
                 // Unpack + parse like your sync code.
                 if let Ok(m) = proto_enc::unpack_message_v2(data) {
                     match proto_enc::parse_nodeproto(&m.payload) {
                         Ok(proto::NodeProto::Ping(_)) => { /* ignore */ }
-                        Ok(other) => println!("{:?}", other),
+                        Ok(other) => {
+
+                            println!("received {} bytes from {}", len, src);
+                            println!("{:?}", other)
+                        },
                         Err(_e) => { /* parse error; ignore or log */ }
                     }
                 }
