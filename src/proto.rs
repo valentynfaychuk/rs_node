@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+use std::fmt;
+use bs58;
+
 /// Top-level message enumeration.
 #[derive(Debug)]
 pub enum NodeProto {
@@ -67,7 +70,6 @@ pub struct Entry {
     pub consensus_packed: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone)]
 pub struct Attestation {
     pub entry_hash: Vec<u8>,     // 32 bytes
     pub mutations_hash: Vec<u8>, // 32 bytes
@@ -75,7 +77,21 @@ pub struct Attestation {
     pub signer: Vec<u8>,         // 48 bytes
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for Attestation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Attestation")
+            .field("entry_hash", &bs58::encode(&self.entry_hash).into_string())
+            .field(
+                "mutations_hash",
+                &bs58::encode(&self.mutations_hash).into_string(),
+            )
+            .field("signature", &bs58::encode(&self.signature).into_string())
+            .field("signer", &bs58::encode(&self.signer).into_string())
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 pub struct AttestationBulk {
     pub attestations: Vec<Attestation>,
 }
