@@ -52,28 +52,56 @@ async fn recv_loop(socket: &UdpSocket, app_state: AppState) -> std::io::Result<(
     let mut buf = vec![0u8; 65_535];
 
     loop {
-        // Apply a 5s timeout like your blocking read_timeout.
         match timeout(Duration::from_secs(5), socket.recv_from(&mut buf)).await {
-            Err(_elapsed) => {
-                // Timed out waiting—skip or add heartbeat/log if you want.
-                continue;
-            }
+            Err(_) => continue,
             Ok(Err(e)) => return Err(e),
             Ok(Ok((len, src))) => {
                 let data = &buf[..len];
 
-                // Unpack + parse like your sync code.
                 if let Ok(m) = proto_enc::unpack_message_v2(data) {
                     match proto_enc::parse_nodeproto(&m.payload) {
-                        Ok(proto::NodeProto::Ping(_)) => { /* ignore */ }
-                        Ok(other) => {
-                            println!("received {} bytes from {}", len, src);
-                            println!("{:?}", other)
+                        Ok(msg) => {
+                            // record the peer as seen on ANY successfully parsed message
+                            let last_msg = variant_tag(&msg).to_string();
+                            // kind is unknown here; pass None unless you can infer it
+                            app_state.seen_peer(src, None::<String>, Some(last_msg)).await;
+
+                            // keep your prints (optional: skip Ping spam)
+                            if !matches!(msg, proto::NodeProto::Ping(_)) {
+                                println!("received {} bytes from {}", len, src);
+                                println!("{:?}", msg);
+                            }
                         }
-                        Err(_e) => { /* parse error; ignore or log */ }
+                        Err(_e) => {
+                            // parse error; do nothing (only add peers when msg is OK)
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/// Small helper: a stable human-readable tag for the enum variant.
+fn variant_tag(m: &proto::NodeProto) -> &'static str {
+    use proto::NodeProto::*;
+    match m {
+        Ping(_) => "Ping",
+        Pong(_) => "Pong",
+        WhoAreYou(_) => "WhoAreYou",
+        TxPool(_) => "TxPool",
+        Peers(_) => "Peers",
+        Sol(_) => "Sol",
+        Entry(_) => "Entry",
+        AttestationBulk(_) => "AttestationBulk",
+        ConsensusBulk(_) => "ConsensusBulk",
+        CatchupEntry(_) => "CatchupEntry",
+        CatchupTri(_) => "CatchupTri",
+        CatchupBi(_) => "CatchupBi",
+        CatchupAttestation(_) => "CatchupAttestation",
+        SpecialBusiness(_) => "SpecialBusiness",
+        SpecialBusinessReply(_) => "SpecialBusinessReply",
+        SolicitEntry(_) => "SolicitEntry",
+        SolicitEntry2(_) => "SolicitEntry2",
     }
 }
