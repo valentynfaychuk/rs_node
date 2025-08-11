@@ -25,6 +25,26 @@ pub enum NodeProto {
     SolicitEntry2(SolicitEntry2),
 }
 
+#[derive(Debug, Clone)]
+pub struct EntryHeader {
+    pub slot: i64,
+    pub dr: Vec<u8>,
+    pub height: i64,
+    pub prev_hash: Vec<u8>,
+    pub prev_slot: i64,
+    pub signer: Vec<u8>,
+    pub txs_hash: Vec<u8>,
+    pub vr: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub hash: Vec<u8>,            // 32 bytes
+    pub header: EntryHeader,      // nested decoded header
+    pub signature: Vec<u8>,       // 96 bytes
+    pub txs: Vec<Vec<u8>>,        // list of tx binaries (can be empty)
+}
+
 /// Shared summary of an entry’s tip.
 #[derive(Debug)]
 pub struct EntrySummary {
@@ -61,13 +81,6 @@ pub struct Peers {
 #[derive(Debug)]
 pub struct Sol {
     pub sol: Vec<u8>,
-}
-
-#[derive(Debug)]
-pub struct Entry {
-    pub entry_packed: Vec<u8>,
-    pub attestation_packed: Option<Vec<u8>>,
-    pub consensus_packed: Option<Vec<u8>>,
 }
 
 pub struct Attestation {
@@ -162,3 +175,5 @@ pub struct MessageV2 {
     pub original_size: u32,
     pub payload: Vec<u8>,
 }
+
+
