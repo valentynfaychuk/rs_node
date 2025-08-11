@@ -7,7 +7,27 @@ mod proto_enc;
 mod test_data; // refers to folder `src/test_data`
 use test_data::ping::PING; // import specific items
 
-fn main() -> std::io::Result<()> {
+use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::widgets::{Block, Borders};
+use std::io;
+
+fn main() -> Result<(), io::Error> {
+    let stdout = io::stdout();
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    terminal.draw(|f| {
+        let size = f.size();
+        let block = Block::default()
+            .title("Hello TUI")
+            .borders(Borders::ALL);
+        f.render_widget(block, size);
+    })?;
+
+    Ok(())
+}
+fn main1() -> std::io::Result<()> {
+
     let t = vec![
         107, 46, 97, 96, 96, 96, 44, 103, 202, 47, 40, 231, 46, 207, 200, 143, 79, 44, 74, 141,
         175, 204, 47, 5, 0,

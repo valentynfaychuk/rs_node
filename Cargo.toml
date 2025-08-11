@@ -8,3 +8,4 @@ eetf = "0.10.0"
 num-traits = "0.2.19"
 flate2 = { version = "1.0.25", features = ["zlib"] }
 miniz_oxide = "0.8.9"
+ratatui = "0.29.0"
