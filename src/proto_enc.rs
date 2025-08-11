@@ -56,6 +56,39 @@ pub fn deflate_decompress(compressed: &[u8]) -> Result<Vec<u8>, std::io::Error> 
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
 }
 
+fn map_term_to_map(term: &Term) -> Result<std::collections::HashMap<Term, Term>, ParseError> {
+    match term {
+        Term::Map(m) => Ok(m.map.clone()),
+        _ => Err(ParseError::WrongType("map")),
+    }
+}
+
+fn parse_attestation_from_bin(bin: &[u8]) -> Result<Attestation, ParseError> {
+    let t = Term::decode(bin)?;                // nested ETF
+    let m = map_term_to_map(&t)?;              // as HashMap<Term, Term>
+
+    let entry_hash = m.get(&Term::Atom(Atom::from("entry_hash")))
+        .and_then(|t| t.binary())
+        .ok_or(ParseError::Missing("entry_hash"))?
+        .to_vec();
+
+    let mutations_hash = m.get(&Term::Atom(Atom::from("mutations_hash")))
+        .and_then(|t| t.binary())
+        .ok_or(ParseError::Missing("mutations_hash"))?
+        .to_vec();
+
+    let signature = m.get(&Term::Atom(Atom::from("signature")))
+        .and_then(|t| t.binary())
+        .ok_or(ParseError::Missing("signature"))?
+        .to_vec();
+
+    let signer = m.get(&Term::Atom(Atom::from("signer")))
+        .and_then(|t| t.binary())
+        .ok_or(ParseError::Missing("signer"))?
+        .to_vec();
+
+    Ok(Attestation { entry_hash, mutations_hash, signature, signer })
+}
 /// Parse any NodeProto message.
 pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
     let decompressed = deflate_decompress(buf)?;
@@ -120,6 +153,23 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
         _ => {
             println!("{:?}", &map);
             Err(ParseError::WrongType("op"))
+        }
+        "attestation_bulk" => {
+            let list = map
+                .get(&Term::Atom(Atom::from("attestations_packed")))
+                .and_then(|t| t.list())
+                .ok_or(ParseError::Missing("attestations_packed"))?;
+
+            let mut attestations = Vec::with_capacity(list.len());
+            for item in list {
+                let bin = item
+                    .binary()
+                    .ok_or(ParseError::WrongType("attestations_packed:binary"))?;
+                let att = parse_attestation_from_bin(bin)?;
+                attestations.push(att);
+            }
+
+            Ok(NodeProto::AttestationBulk(AttestationBulk { attestations }))
         }
     }
 }

@@ -67,9 +67,17 @@ pub struct Entry {
     pub consensus_packed: Option<Vec<u8>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct Attestation {
+    pub entry_hash: Vec<u8>,       // 32 bytes
+    pub mutations_hash: Vec<u8>,   // 32 bytes
+    pub signature: Vec<u8>,        // 96 bytes
+    pub signer: Vec<u8>,           // 48 bytes
+}
+
+#[derive(Debug, Clone)]
 pub struct AttestationBulk {
-    pub attestations_packed: Vec<u8>,
+    pub attestations: Vec<Attestation>,
 }
 
 #[derive(Debug)]

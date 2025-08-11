@@ -11,7 +11,6 @@ use test_data::ping::PING;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-
     // Target UDP address of an Amadeus node.
     let addr: SocketAddr = std::env::var("UDP_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:36969".to_string())
@@ -48,10 +47,9 @@ async fn recv_loop(socket: &UdpSocket) -> std::io::Result<()> {
                     match proto_enc::parse_nodeproto(&m.payload) {
                         Ok(proto::NodeProto::Ping(_)) => { /* ignore */ }
                         Ok(other) => {
-
                             println!("received {} bytes from {}", len, src);
                             println!("{:?}", other)
-                        },
+                        }
                         Err(_e) => { /* parse error; ignore or log */ }
                     }
                 }
