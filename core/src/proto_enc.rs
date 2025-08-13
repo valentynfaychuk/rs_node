@@ -287,7 +287,6 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
     // Next is 7 zero bits and 1 flag bit, total 1 byte
     let flag_byte = buf[6];
     if flag_byte & 0b11111110 != 0 {
-        println!("! shard packet");
         return Err("invalid 7-bit zero field".into());
     }
     let _flag = flag_byte & 0b00000001;
@@ -307,7 +306,6 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
     let original_size = u32::from_be_bytes(buf[sig_end + 12..sig_end + 16].try_into().unwrap());
 
     let payload = buf[sig_end + 16..].to_vec();
-    println!("shard: {} {}", shard_index, shard_total);
 
     Ok(MessageV2 {
         version,

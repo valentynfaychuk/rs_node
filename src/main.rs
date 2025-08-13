@@ -68,12 +68,17 @@ async fn recv_loop(socket: &UdpSocket, app_state: AppState) -> std::io::Result<(
                             app_state.seen_peer(src, Some(pk_str), Some(last_msg)).await;
 
                             // keep your prints (optional: skip Ping spam)
-                            if !matches!(msg, proto::NodeProto::Ping(_)) {
-                                println!("received {} bytes from {}", len, src);
-                                println!("{:?}", msg);
+                            match msg {
+                                proto::NodeProto::Ping(_) => {}
+                                proto::NodeProto::AttestationBulk(_) => {}
+                                _ => {
+                                    println!("received {} bytes from {}", len, src);
+                                    println!("{:?}", msg);
+                                }
                             }
                         }
                         Err(_e) => {
+                            println!("err packet, shard: {} {}", &m.shard_index, &m.shard_total);
                             // parse error; do nothing (only add peers when msg is OK)
                         }
                     }
