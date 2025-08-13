@@ -307,6 +307,7 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
     let original_size = u32::from_be_bytes(buf[sig_end + 12..sig_end + 16].try_into().unwrap());
 
     let payload = buf[sig_end + 16..].to_vec();
+    println!("shard: {} {}", shard_index, shard_total);
 
     Ok(MessageV2 {
         version,
