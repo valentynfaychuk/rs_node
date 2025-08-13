@@ -72,7 +72,7 @@ async fn recv_loop(socket: &UdpSocket, app_state: AppState) -> std::io::Result<(
                                 proto::NodeProto::Ping(_) => {}
                                 proto::NodeProto::AttestationBulk(_) => {}
                                 proto::NodeProto::Entry(e) => {
-                                    println!("entry: {} {}", &e.header.height, &e.txs.len());
+                                    println!("entry: {} txs count: {}", &e.header.height, &e.txs.len());
                                 },
                                 _ => {
                                     println!("received {} bytes from {}", len, src);
