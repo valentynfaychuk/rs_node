@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
@@ -6,8 +7,10 @@ use tokio::time::timeout;
 use core::genesis;
 use core::proto;
 use core::proto_enc;
+use core::reedsolomon::ReedSolomonReassembler;
 use core::test_data::ping::PING;
 
+use rs_plot::state::PeerInfo;
 use rs_plot::{serve, state::AppState};
 
 #[tokio::main]
@@ -22,8 +25,8 @@ async fn main() -> std::io::Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:36969").await?;
 
     // Send a simple ping message to the node.
-    socket.send_to(&PING, &addr).await?;
-    println!("sent");
+    //socket.send_to(&PING, &addr).await?;
+    println!("not sent");
 
     let app_state = rs_plot::state::AppState::new();
 
@@ -35,9 +38,12 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
+    let rs_reassembler = ReedSolomonReassembler::new();
+    rs_reassembler.start_periodic_cleanup();
+
     // --- run UDP recv loop concurrently ---
     let udp = tokio::spawn(async move {
-        if let Err(e) = recv_loop(&socket, app_state).await {
+        if let Err(e) = recv_loop(&socket, app_state, rs_reassembler).await {
             eprintln!("udp loop error: {e}");
         }
     });
@@ -48,7 +54,11 @@ async fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-async fn recv_loop(socket: &UdpSocket, app_state: AppState) -> std::io::Result<()> {
+async fn recv_loop(
+    socket: &UdpSocket,
+    app_state: AppState,
+    reassembler: ReedSolomonReassembler,
+) -> std::io::Result<()> {
     let mut buf = vec![0u8; 65_535];
 
     loop {
@@ -59,8 +69,9 @@ async fn recv_loop(socket: &UdpSocket, app_state: AppState) -> std::io::Result<(
                 let data = &buf[..len];
 
                 if let Ok(m) = proto_enc::unpack_message_v2(data) {
-                    match proto_enc::parse_nodeproto(&m.payload) {
-                        Ok(msg) => {
+                    match reassembler.add_shard(&m) {
+                        Ok(Some(msg)) => {
+                            // final shard received - reassembler assembled the message
                             // record the peer as seen on ANY successfully parsed message
                             let last_msg = variant_tag(&msg).to_string();
                             // kind is unknown here; pass None unless you can infer it
@@ -69,19 +80,34 @@ async fn recv_loop(socket: &UdpSocket, app_state: AppState) -> std::io::Result<(
 
                             // keep your prints (optional: skip Ping spam)
                             match msg {
-                                proto::NodeProto::Ping(_) => {}
-                                proto::NodeProto::AttestationBulk(_) => {}
+                                proto::NodeProto::Ping(_) => {
+                                    println!("ping ({})", src);
+                                }
+                                proto::NodeProto::AttestationBulk(_) => {
+                                    println!("attestation bulk ({})", src);
+                                }
                                 proto::NodeProto::Entry(e) => {
-                                    println!("entry: {} txs count: {}", &e.header.height, &e.txs.len());
-                                },
+                                    println!(
+                                        "entry ({}): height {} txs {}",
+                                        src,
+                                        &e.header.height,
+                                        &e.txs.len()
+                                    );
+                                }
                                 _ => {
                                     println!("received {} bytes from {}", len, src);
-                                    println!("{:?}", msg);
                                 }
                             }
                         }
-                        Err(_e) => {
-                            println!("err packet, shard: {} {}", &m.shard_index, &m.shard_total);
+                        Ok(None) => {
+                            // the are not enough shards to assemble the message yet
+                            // do nothing
+                        }
+                        Err(e) => {
+                            println!(
+                                "err packet, shard: {} {}, {}",
+                                &m.shard_index, &m.shard_total, e
+                            );
                             // parse error; do nothing (only add peers when msg is OK)
                         }
                     }

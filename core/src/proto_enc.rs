@@ -270,12 +270,12 @@ impl TermExt for Term {
 pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
     // Must be at least header length
     if buf.len() < 3 + 3 + 1 + 48 + 96 + 2 + 2 + 8 + 4 {
-        return Err("buffer too short".into());
+        return Err(format!("message v2 is only {} bytes", buf.len()));
     }
 
     // Magic
     if &buf[0..3] != b"AMA" {
-        return Err("invalid magic".into());
+        return Err(format!("invalid magic: {:?}", &buf[0..3]));
     }
 
     let version_bytes = &buf[3..6];
@@ -287,9 +287,12 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
     // Next is 7 zero bits and 1 flag bit, total 1 byte
     let flag_byte = buf[6];
     if flag_byte & 0b11111110 != 0 {
-        return Err("invalid 7-bit zero field".into());
+        return Err(format!("invalid flags: {}", flag_byte));
     }
-    let _flag = flag_byte & 0b00000001;
+
+    if flag_byte & 0b00000001 == 0 {
+        return Err("message not signed".into());
+    }
 
     let pk_start = 7;
     let pk_end = pk_start + 48;
@@ -490,3 +493,32 @@ fn parse_entry_from_bin(bin: &[u8]) -> Result<Entry, ParseError> {
         txs,
     })
 }
+
+// Signed Message Format (BLS Signature)
+//
+// Offset  Length  Field               Description
+// ──────────────────────────────────────────────────────────────────
+// 0-2     3       Magic               "AMA" (0x414D41)
+// 3-5     3       Version             3-byte version (e.g., 1.1.2)
+// 6       1       Flags               Bits: 0000000[signed=1]
+// 7-54    48      Public Key          BLS12-381 public key (48 bytes)
+// 55-150  96      Signature           BLS12-381 signature (96 bytes)
+// 151-152 2       Shard Index         Current shard number (big-endian)
+// 153-154 2       Shard Total         Total shards * 2 (big-endian)
+// 155-162 8       Timestamp           Nanosecond timestamp (big-endian)
+// 163-166 4       Original Size       Size of original message (big-endian)
+// 167+    N       Payload/Shard       Message data or Reed-Solomon shard
+//
+// Encrypted Message Format (AES-256-GCM)
+//
+// Offset  Length  Field               Description
+// ──────────────────────────────────────────────────────────────────
+// 0-2     3       Magic               "AMA" (0x414D41)
+// 3-5     3       Version             3-byte version
+// 6       1       Flags               0x00 (encrypted flag)
+// 7-54    48      Public Key          Sender's public key
+// 55-56   2       Shard Index         Current shard number
+// 57-58   2       Shard Total         Total shards * 2
+// 59-66   8       Timestamp           Nanosecond timestamp
+// 67-70   4       Original Size       Size of original payload
+// 71+     N       Encrypted Payload   AES-GCM encrypted data or shard

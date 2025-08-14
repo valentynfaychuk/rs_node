@@ -168,6 +168,7 @@ pub struct SolicitEntry2;
 pub struct MessageV2 {
     pub version: String,
     pub pk: Vec<u8>,
+    // Is present if the message is signed
     pub signature: Vec<u8>,
     pub shard_index: u16,
     pub shard_total: u16,

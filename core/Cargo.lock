@@ -147,9 +147,13 @@ dependencies = [
  "bs58",
  "eetf",
  "flate2",
+ "hex",
  "miniz_oxide",
  "num-traits",
+ "rand",
  "ratatui",
+ "reed-solomon-simd",
+ "reedsolomon_ex",
  "tokio",
 ]
 
@@ -160,6 +164,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b49ba7ef1ad6107f8824dbe97de947cbaac53c44e7f9756a1fba0d37c1eec505"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "cpufeatures"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -272,6 +285,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixedbitset"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
+
+[[package]]
 name = "flate2"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -293,6 +312,17 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "getrandom"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "335ff9f135e4384c8150d6f27c6daed433577f86b4750418338c01a1a2528592"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "wasi",
+]
 
 [[package]]
 name = "gimli"
@@ -328,6 +358,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -350,6 +386,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "inventory"
+version = "0.3.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab08d7cd2c5897f2c949e5383ea7c7db03fb19130ffcfbf7eda795137ae3cb83"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -406,6 +451,16 @@ dependencies = [
  "core2",
  "hashbrown 0.14.5",
  "rle-decode-fast",
+]
+
+[[package]]
+name = "libloading"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
+dependencies = [
+ "cfg-if",
+ "windows-targets 0.53.3",
 ]
 
 [[package]]
@@ -562,6 +617,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "ppv-lite86"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
+dependencies = [
+ "zerocopy",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.96"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -577,6 +641,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "rand"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+dependencies = [
+ "libc",
+ "rand_chacha",
+ "rand_core",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
+dependencies = [
+ "ppv-lite86",
+ "rand_core",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom",
 ]
 
 [[package]]
@@ -601,6 +695,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "readme-rustdocifier"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08ad765b21a08b1a8e5cdce052719188a23772bcbefb3c439f0baaf62c56ceac"
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -608,6 +708,32 @@ checksum = "5407465600fb0548f1442edf71dd20683c6ed326200ace4b1ef0763521bb3b77"
 dependencies = [
  "bitflags",
 ]
+
+[[package]]
+name = "reed-solomon-simd"
+version = "3.1.0"
+source = "git+https://github.com/AndersTrier/reed-solomon-simd#e143f209907614164e1cf3bd3079b55154961c40"
+dependencies = [
+ "cpufeatures",
+ "fixedbitset",
+ "once_cell",
+ "readme-rustdocifier",
+]
+
+[[package]]
+name = "reedsolomon_ex"
+version = "0.1.0"
+source = "git+https://github.com/amadeus-robot/reedsolomon_ex?branch=main#e11ddb33a50a4a3ccb1419a438fcc00b3c7ba8d4"
+dependencies = [
+ "reed-solomon-simd",
+ "rustler",
+]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53a49587ad06b26609c52e423de037e7f57f20d53535d66e08c695f347df952a"
 
 [[package]]
 name = "rle-decode-fast"
@@ -632,6 +758,31 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "rustler"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3fe55230a9c379733dd38ee67d4072fa5c558b2e22b76b0e7f924390456e003"
+dependencies = [
+ "inventory",
+ "libloading",
+ "regex-lite",
+ "rustler_codegen",
+]
+
+[[package]]
+name = "rustler_codegen"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb3b8de901ae61418e2036245d28e41ef58080d04f40b68430471ae36a4e84ed"
+dependencies = [
+ "heck",
+ "inventory",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
