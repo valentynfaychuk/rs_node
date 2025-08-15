@@ -1,4 +1,6 @@
-target
-.idea
-*.pcap.local
+target/
+.idea/
+
+*.local
 .env
+**/.env

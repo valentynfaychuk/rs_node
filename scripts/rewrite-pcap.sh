@@ -4,10 +4,10 @@ set -euo pipefail
 usage() {
   cat <<EOF
 
-  $0 <file.pcap> <if>
+  $0 <name.pcap> <if>
 
 Rewrites the provided packet capture to replay on the given interface.
-The rewritten file is saved alongside the original as <name>.local.pcap.
+The rewritten file is saved alongside the original as <name.pcap>.local
 EOF
 }
 
@@ -30,13 +30,13 @@ if [[ ! -f "$in_pcap" ]]; then
   exit 1
 fi
 
-# Determine output path: sibling with .local.pcap suffix
+# Determine output path: sibling with .pcap.local suffix
 in_dir=$(dirname "$in_pcap")
 in_base=$(basename "$in_pcap")
 if [[ "$in_base" == *.pcap ]]; then
-  out_base="${in_base%.pcap}.local.pcap"
+  out_base="${in_base%.pcap}.pcap.local"
 else
-  out_base="${in_base}.local.pcap"
+  out_base="${in_base}.pcap.local"
 fi
 out_pcap="$in_dir/$out_base"
 
