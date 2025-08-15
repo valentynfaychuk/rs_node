@@ -508,17 +508,3 @@ fn parse_entry_from_bin(bin: &[u8]) -> Result<Entry, ParseError> {
 // 155-162 8       Timestamp           Nanosecond timestamp (big-endian)
 // 163-166 4       Original Size       Size of original message (big-endian)
 // 167+    N       Payload/Shard       Message data or Reed-Solomon shard
-//
-// Encrypted Message Format (AES-256-GCM)
-//
-// Offset  Length  Field               Description
-// ──────────────────────────────────────────────────────────────────
-// 0-2     3       Magic               "AMA" (0x414D41)
-// 3-5     3       Version             3-byte version
-// 6       1       Flags               0x00 (encrypted flag)
-// 7-54    48      Public Key          Sender's public key
-// 55-56   2       Shard Index         Current shard number
-// 57-58   2       Shard Total         Total shards * 2
-// 59-66   8       Timestamp           Nanosecond timestamp
-// 67-70   4       Original Size       Size of original payload
-// 71+     N       Encrypted Payload   AES-GCM encrypted data or shard

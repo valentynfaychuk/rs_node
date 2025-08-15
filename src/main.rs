@@ -25,8 +25,8 @@ async fn main() -> std::io::Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:36969").await?;
 
     // Send a simple ping message to the node.
-    //socket.send_to(&PING, &addr).await?;
-    println!("not sent");
+    socket.send_to(&PING, &addr).await?;
+    println!("sent");
 
     let app_state = rs_plot::state::AppState::new();
 

@@ -4,9 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::shards::{create_resource, decode_shards};
+use crate::bls;
 use crate::proto::{MessageV2, NodeProto};
 use crate::proto_enc::parse_nodeproto;
 use aes_gcm::{Aes256Gcm, Nonce, aead::Aead, aead::KeyInit};
+use blake3;
 use sha2::{Digest, Sha256};
 
 pub struct ReedSolomonReassembler {
@@ -152,25 +154,30 @@ impl ReedSolomonReassembler {
         Ok(None)
     }
 
+    // TODO: rename this function
     fn proc_msg(
         key: &ReassemblyKey,
         signature: &[u8],
         payload: &[u8],
     ) -> anyhow::Result<Option<NodeProto>> {
         if !signature.is_empty() {
-            // Compute Blake3 hash over pk || payload (Elixir: Blake3.hash(pk<>payload))
-            let mut h = blake3::Hasher::new();
-            h.update(&key.pk);
-            h.update(&payload);
-            let digest = h.finalize();
-            let digest_bytes = digest.as_bytes();
+            // Align with Elixir: valid = BlsEx.verify?(pk, signature, Blake3.hash(pk<>payload), BLS12AggSig.dst_node())
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&key.pk);
+            hasher.update(payload);
+            let msg_hash = hasher.finalize();
 
-            if verify_bls_signature(&key.pk, &signature, digest_bytes) {
-                if let Ok(msg) = parse_nodeproto(payload) {
-                    return Ok(Some(msg));
+            match bls::verify(&key.pk, signature, msg_hash.as_bytes(), bls::DST_NODE) {
+                Ok(()) => {
+                    if let Ok(msg) = parse_nodeproto(payload) {
+                        return Ok(Some(msg));
+                    }
+                    Err(anyhow::anyhow!(
+                        "can't parse payload after signature verification"
+                    ))?
                 }
+                Err(_) => Err(anyhow::anyhow!("invalid bls signature"))?,
             }
-            Err(anyhow::anyhow!("invalid bls signature"))?
         } else {
             // Right now, all messages are using signature, so this is for the future
             let shared_secret: Option<Vec<u8>> = None;
@@ -213,9 +220,4 @@ impl ReedSolomonReassembler {
             Err(anyhow::anyhow!("no shared_secret in message"))?
         }
     }
-}
-
-fn verify_bls_signature(pk: &[u8], sig: &[u8], msg_digest32: &[u8]) -> bool {
-    // TODO: implement
-    true
 }
