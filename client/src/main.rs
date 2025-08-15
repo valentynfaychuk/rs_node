@@ -10,8 +10,8 @@ use core::proto_enc;
 use core::reedsolomon::ReedSolomonReassembler;
 use core::test_data::ping::PING;
 
-use rs_plot::state::PeerInfo;
-use rs_plot::{serve, state::AppState};
+use plot::state::PeerInfo;
+use plot::{serve, state::AppState};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -28,7 +28,7 @@ async fn main() -> std::io::Result<()> {
     socket.send_to(&PING, &addr).await?;
     println!("sent");
 
-    let app_state = rs_plot::state::AppState::new();
+    let app_state = plot::state::AppState::new();
 
     let s1 = app_state.clone();
     // --- spawn HTTP server ---

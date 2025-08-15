@@ -1,15 +1,10 @@
 [package]
-name = "core"
+name = "client"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-name = "core"
-path = "src/lib.rs"
-crate-type = ["rlib"]
-
 [dependencies]
-eetf = "0.10.0"
+eetf = "0.10.0" # used to talk with erlang/elixir instances through the network
 num-traits = "0.2.19"
 flate2 = { version = "1.0.25", features = ["zlib"] }
 miniz_oxide = "0.8.9"
@@ -17,11 +12,5 @@ ratatui = "0.29.0"
 tokio = { version = "1.47.1", features = ["full"] }
 bs58 = "0.5.1"
 anyhow = "1.0.98"
-reed-solomon-simd = "3.1.0"
-aes-gcm = "0.10.3"
-sha2 = "0.10.9"
-blake3 = "1.5.5"
-bls12_381 = "0.8.0"
-blst = "0.3.15"
-thiserror = "2.0.14"
-group = "0.13.0"
+core = { workspace = true }
+plot = { workspace = true }

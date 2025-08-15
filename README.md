@@ -1,5 +1,13 @@
 # Rust rewrite of the Amadeus Node
 
+Folder structure:
+
+- client: Light client
+- core: Core library
+- plot: Web dashboard
+- pcaps: Testing PCAP files
+- scripts: Self explanatory
+
 ## Prerequisites
 
 You need to have rust environment and a running node somewhere to connect to.
@@ -10,14 +18,14 @@ To setup the machine, refer the Dockerfile from https://github.com/amadeus-robot
 OFFLINE=1 iex -S mix
 ```
 
-## Running
+## Running Light Client
 
 ```bash
 # When running on the same machine as the running node, UDP_ADDR=127.0.0.1:36969 is added by default
-UDP_ADDR=127.0.0.1:36969 cargo run --bin rs
+UDP_ADDR=127.0.0.1:36969 cargo run --package client
 ```
 
-## Simulating network traffic
+### Simulating network traffic
 
 ### PCAP path
 
@@ -39,4 +47,13 @@ Step 3. Replay the rewritten pcap on your laptop (needs sudo because working wit
 ```bash
 sudo tcpdump -i en0 -n -vv udp dst port 36969
 sudo tcpreplay -i en0 --pps 100 pcaps/test.local.pcap
+```
+
+## Adding core library to other project
+
+```bash
+cargo add ama_core --git https://github.com/amadeus-robot/rs_node --package core --branch main
+# Or add following to Cargo.toml
+# [dependencies]
+# ama_core = { package = "core", git = "https://github.com/amadeus-robot/rs_node", branch = "main" }
 ```

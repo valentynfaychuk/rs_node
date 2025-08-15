@@ -258,8 +258,7 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7bc6d6292be3a19e6379786dac800f551e5865a5bb51ebbe3064ab80433f403"
+source = "git+https://github.com/vans163/bls12_381#cb29d44ff3a2539655c95086f8cd2cfb162bc2c2"
 dependencies = [
  "ff",
  "group",
@@ -339,6 +338,22 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
  "crypto-common",
  "inout",
+]
+
+[[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bs58",
+ "core",
+ "eetf",
+ "flate2",
+ "miniz_oxide",
+ "num-traits",
+ "plot",
+ "ratatui",
+ "tokio",
 ]
 
 [[package]]
@@ -1089,6 +1104,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "plot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "axum",
+ "futures-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "polyval"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1171,11 +1200,12 @@ dependencies = [
 
 [[package]]
 name = "reed-solomon-simd"
-version = "3.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab6badd4f4b9c93832eb3707431e8e7bea282fae96801312f0990d48b030f8c5"
+version = "3.1.0"
+source = "git+https://github.com/AndersTrier/reed-solomon-simd#e143f209907614164e1cf3bd3079b55154961c40"
 dependencies = [
+ "cpufeatures",
  "fixedbitset",
+ "once_cell",
  "readme-rustdocifier",
 ]
 
@@ -1184,36 +1214,6 @@ name = "rle-decode-fast"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
-
-[[package]]
-name = "rs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bs58",
- "core",
- "eetf",
- "flate2",
- "miniz_oxide",
- "num-traits",
- "ratatui",
- "rs_plot",
- "tokio",
-]
-
-[[package]]
-name = "rs_plot"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "axum",
- "futures-core",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
-]
 
 [[package]]
 name = "rustc-demangle"
@@ -1440,18 +1440,18 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
+version = "2.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+checksum = "0b0949c3a6c842cbde3f1686d6eea5a010516deb7085f79db747562d4102f41e"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.69"
+version = "2.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+checksum = "cc5b44b4ab9c2fdd0e0512e6bece8388e214c0749f5862b114cc5b7a25daf227"
 dependencies = [
  "proc-macro2",
  "quote",
