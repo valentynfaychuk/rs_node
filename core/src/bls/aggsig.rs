@@ -4,7 +4,7 @@
 // - A simple aggregate signature tracker with a signer mask
 // - Helper methods to add signatures, list signed trainers, and compute score
 
-use super::{aggregate_signatures, Error};
+use super::{Error, aggregate_signatures};
 
 // Domain Separation Tags (DST), aligned with the Elixir implementation
 pub const DST: &[u8] = b"AMADEUS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
@@ -56,21 +56,14 @@ impl AggSig {
         }
         self.mask[index] = true;
 
-        let agg = aggregate_signatures([
-            self.aggsig.as_slice(),
-            signature,
-        ])?;
+        let agg = aggregate_signatures([self.aggsig.as_slice(), signature])?;
         self.aggsig = agg;
         Ok(())
     }
 
     /// Return indices of trainers which are set in the mask.
     pub fn signed_indices(&self) -> Vec<usize> {
-        self.mask
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &b)| if b { Some(i) } else { None })
-            .collect()
+        self.mask.iter().enumerate().filter_map(|(i, &b)| if b { Some(i) } else { None }).collect()
     }
 
     /// Return the subset of trainers whose bits are set in the mask.
@@ -121,9 +114,7 @@ where
     TPk: AsRef<[u8]>,
 {
     let target = pk.as_ref();
-    trainers
-        .iter()
-        .position(|cand| cand.as_ref() == target)
+    trainers.iter().position(|cand| cand.as_ref() == target)
 }
 
 fn copy_sig(signature: &[u8]) -> Result<[u8; 96], Error> {

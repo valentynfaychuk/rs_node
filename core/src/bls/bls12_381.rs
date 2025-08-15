@@ -3,9 +3,7 @@ use group::Curve;
 
 // We use blst for signing/verification (hash_to_curve with DST) and serialization
 use blst::BLST_ERROR;
-use blst::min_pk::{
-    PublicKey as BlstPublicKey, SecretKey as BlstSecretKey, Signature as BlstSignature,
-};
+use blst::min_pk::{PublicKey as BlstPublicKey, SecretKey as BlstSecretKey, Signature as BlstSignature};
 
 /// Errors that can be returned by BLS operations
 #[derive(Debug, thiserror::Error)]
@@ -62,11 +60,7 @@ fn parse_public_key(bytes: &[u8]) -> Result<G1Projective, Error> {
     match Option::<G1Affine>::from(G1Affine::from_compressed(&res)) {
         Some(affine) => {
             let projective = G1Projective::from(affine);
-            if g1_projective_is_valid(&projective) {
-                Ok(projective)
-            } else {
-                Err(Error::InvalidPoint)
-            }
+            if g1_projective_is_valid(&projective) { Ok(projective) } else { Err(Error::InvalidPoint) }
         }
         None => Err(Error::InvalidPoint),
     }
@@ -129,11 +123,7 @@ pub fn verify(pk_bytes: &[u8], sig_bytes: &[u8], msg: &[u8], dst: &[u8]) -> Resu
         true, // validate pk ∈ G1
     );
 
-    if err == BLST_ERROR::BLST_SUCCESS {
-        Ok(())
-    } else {
-        Err(Error::VerificationFailed)
-    }
+    if err == BLST_ERROR::BLST_SUCCESS { Ok(()) } else { Err(Error::VerificationFailed) }
 }
 
 /// Aggregate multiple compressed G1 public keys into one compressed G1 public key (48 bytes).

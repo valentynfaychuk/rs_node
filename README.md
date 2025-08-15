@@ -18,6 +18,10 @@ To setup the machine, refer the Dockerfile from https://github.com/amadeus-robot
 OFFLINE=1 iex -S mix
 ```
 
+## Contributing
+
+Before pushing changes, run `cargo fmt` to format the code.
+
 ## Running Light Client
 
 ```bash

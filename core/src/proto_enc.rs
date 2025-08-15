@@ -52,8 +52,7 @@ impl Error for ParseError {
 use miniz_oxide::inflate::decompress_to_vec;
 
 pub fn deflate_decompress(compressed: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    decompress_to_vec(compressed)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
+    decompress_to_vec(compressed).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
 }
 
 fn map_term_to_map(term: &Term) -> Result<std::collections::HashMap<Term, Term>, ParseError> {
@@ -91,12 +90,7 @@ fn parse_attestation_from_bin(bin: &[u8]) -> Result<Attestation, ParseError> {
         .ok_or(ParseError::Missing("signer"))?
         .to_vec();
 
-    Ok(Attestation {
-        entry_hash,
-        mutations_hash,
-        signature,
-        signer,
-    })
+    Ok(Attestation { entry_hash, mutations_hash, signature, signer })
 }
 /// Parse any NodeProto message.
 pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
@@ -110,10 +104,7 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
     };
 
     // `op` determines the variant.
-    let op_atom = map
-        .get(&Term::Atom(Atom::from("op")))
-        .and_then(|t| t.atom())
-        .ok_or(ParseError::Missing("op"))?;
+    let op_atom = map.get(&Term::Atom(Atom::from("op"))).and_then(|t| t.atom()).ok_or(ParseError::Missing("op"))?;
 
     match op_atom.name.as_str() {
         "ping" => {
@@ -123,11 +114,7 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
                 .get(&Term::Atom(Atom::from("ts_m")))
                 .and_then(|t| t.integer())
                 .ok_or(ParseError::Missing("ts_m"))?;
-            Ok(NodeProto::Ping(Ping {
-                temporal,
-                rooted,
-                ts_m,
-            }))
+            Ok(NodeProto::Ping(Ping { temporal, rooted, ts_m }))
         }
         "pong" => {
             let ts_m = map
@@ -151,15 +138,11 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
                 .get(&Term::Atom(Atom::from("txs_packed")))
                 .and_then(|t| t.binary())
                 .ok_or(ParseError::Missing("txs_packed"))?;
-            Ok(NodeProto::TxPool(TxPool {
-                txs_packed: txs.to_vec(),
-            }))
+            Ok(NodeProto::TxPool(TxPool { txs_packed: txs.to_vec() }))
         }
         "peers" => {
-            let list = map
-                .get(&Term::Atom(Atom::from("ips")))
-                .and_then(|t| t.list())
-                .ok_or(ParseError::Missing("ips"))?;
+            let list =
+                map.get(&Term::Atom(Atom::from("ips"))).and_then(|t| t.list()).ok_or(ParseError::Missing("ips"))?;
             let ips = list
                 .iter()
                 .map(|t| t.string().map(|s| s.to_string()))
@@ -176,9 +159,7 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
 
             let mut attestations = Vec::with_capacity(list.len());
             for item in list {
-                let bin = item
-                    .binary()
-                    .ok_or(ParseError::WrongType("attestations_packed:binary"))?;
+                let bin = item.binary().ok_or(ParseError::WrongType("attestations_packed:binary"))?;
                 let att = parse_attestation_from_bin(bin)?;
                 attestations.push(att);
             }
@@ -199,25 +180,16 @@ fn parse_entry_summary(term: Option<&Term>) -> Result<EntrySummary, ParseError> 
         _ => return Err(ParseError::WrongType("EntrySummary")),
     };
 
-    let header = map
-        .get(&Term::Atom(Atom::from("header")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("header"))?;
+    let header =
+        map.get(&Term::Atom(Atom::from("header"))).and_then(|t| t.binary()).ok_or(ParseError::Missing("header"))?;
     let signature = map
         .get(&Term::Atom(Atom::from("signature")))
         .and_then(|t| t.binary())
         .ok_or(ParseError::Missing("signature"))?;
 
-    let mask = map
-        .get(&Term::Atom(Atom::from("mask")))
-        .and_then(|t| t.binary())
-        .map(|b| b.to_vec());
+    let mask = map.get(&Term::Atom(Atom::from("mask"))).and_then(|t| t.binary()).map(|b| b.to_vec());
 
-    Ok(EntrySummary {
-        header: header.to_vec(),
-        signature: signature.to_vec(),
-        mask,
-    })
+    Ok(EntrySummary { header: header.to_vec(), signature: signature.to_vec(), mask })
 }
 
 use eetf::{Binary, List};
@@ -279,10 +251,7 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
     }
 
     let version_bytes = &buf[3..6];
-    let version = format!(
-        "{}.{}.{}",
-        version_bytes[0], version_bytes[1], version_bytes[2]
-    );
+    let version = format!("{}.{}.{}", version_bytes[0], version_bytes[1], version_bytes[2]);
 
     // Next is 7 zero bits and 1 flag bit, total 1 byte
     let flag_byte = buf[6];
@@ -310,16 +279,7 @@ pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
 
     let payload = buf[sig_end + 16..].to_vec();
 
-    Ok(MessageV2 {
-        version,
-        pk,
-        signature,
-        shard_index,
-        shard_total,
-        ts_nano,
-        original_size,
-        payload,
-    })
+    Ok(MessageV2 { version, pk, signature, shard_index, shard_total, ts_nano, original_size, payload })
 }
 
 #[allow(dead_code)]
@@ -395,21 +355,12 @@ fn parse_header_from_bin(bin: &[u8]) -> Result<EntryHeader, ParseError> {
         _ => return Err(ParseError::WrongType("header map")),
     };
 
-    let slot = map
-        .get(&Term::Atom(Atom::from("slot")))
-        .and_then(|t| t.integer())
-        .ok_or(ParseError::Missing("slot"))?;
+    let slot = map.get(&Term::Atom(Atom::from("slot"))).and_then(|t| t.integer()).ok_or(ParseError::Missing("slot"))?;
 
-    let dr = map
-        .get(&Term::Atom(Atom::from("dr")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("dr"))?
-        .to_vec();
+    let dr = map.get(&Term::Atom(Atom::from("dr"))).and_then(|t| t.binary()).ok_or(ParseError::Missing("dr"))?.to_vec();
 
-    let height = map
-        .get(&Term::Atom(Atom::from("height")))
-        .and_then(|t| t.integer())
-        .ok_or(ParseError::Missing("height"))?;
+    let height =
+        map.get(&Term::Atom(Atom::from("height"))).and_then(|t| t.integer()).ok_or(ParseError::Missing("height"))?;
 
     let prev_hash = map
         .get(&Term::Atom(Atom::from("prev_hash")))
@@ -434,22 +385,9 @@ fn parse_header_from_bin(bin: &[u8]) -> Result<EntryHeader, ParseError> {
         .ok_or(ParseError::Missing("txs_hash"))?
         .to_vec();
 
-    let vr = map
-        .get(&Term::Atom(Atom::from("vr")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("vr"))?
-        .to_vec();
+    let vr = map.get(&Term::Atom(Atom::from("vr"))).and_then(|t| t.binary()).ok_or(ParseError::Missing("vr"))?.to_vec();
 
-    Ok(EntryHeader {
-        slot,
-        dr,
-        height,
-        prev_hash,
-        prev_slot,
-        signer,
-        txs_hash,
-        vr,
-    })
+    Ok(EntryHeader { slot, dr, height, prev_hash, prev_slot, signer, txs_hash, vr })
 }
 fn parse_entry_from_bin(bin: &[u8]) -> Result<Entry, ParseError> {
     let t = Term::decode(bin)?;
@@ -458,16 +396,11 @@ fn parse_entry_from_bin(bin: &[u8]) -> Result<Entry, ParseError> {
         _ => return Err(ParseError::WrongType("entry")),
     };
 
-    let hash = m
-        .get(&Term::Atom(Atom::from("hash")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("hash"))?
-        .to_vec();
+    let hash =
+        m.get(&Term::Atom(Atom::from("hash"))).and_then(|t| t.binary()).ok_or(ParseError::Missing("hash"))?.to_vec();
 
-    let header_bin = m
-        .get(&Term::Atom(Atom::from("header")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("header"))?;
+    let header_bin =
+        m.get(&Term::Atom(Atom::from("header"))).and_then(|t| t.binary()).ok_or(ParseError::Missing("header"))?;
     let header = parse_header_from_bin(header_bin)?;
 
     let signature = m
@@ -479,19 +412,10 @@ fn parse_entry_from_bin(bin: &[u8]) -> Result<Entry, ParseError> {
     let txs = m
         .get(&Term::Atom(Atom::from("txs")))
         .and_then(|t| t.list())
-        .map(|l| {
-            l.iter()
-                .filter_map(|t| t.binary().map(|b| b.to_vec()))
-                .collect()
-        })
+        .map(|l| l.iter().filter_map(|t| t.binary().map(|b| b.to_vec())).collect())
         .unwrap_or_default();
 
-    Ok(Entry {
-        hash,
-        header,
-        signature,
-        txs,
-    })
+    Ok(Entry { hash, header, signature, txs })
 }
 
 // Signed Message Format (BLS Signature)

@@ -15,10 +15,7 @@ use tokio::time::interval;
 use crate::{state::AppState, views, views::layout};
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", get(index))
-        .route("/stream", get(stream_peers))
-        .with_state(state)
+    Router::new().route("/", get(index)).route("/stream", get(stream_peers)).with_state(state)
 }
 
 async fn index(State(state): State<AppState>) -> Html<String> {
@@ -26,9 +23,7 @@ async fn index(State(state): State<AppState>) -> Html<String> {
     Html(layout::page("Peers", &views::peers::page(&peers)))
 }
 
-async fn stream_peers(
-    State(state): State<AppState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+async fn stream_peers(State(state): State<AppState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let st = state.clone();
     let stream = stream! {
         let mut ticker = interval(Duration::from_millis(100));
@@ -41,6 +36,3 @@ async fn stream_peers(
     };
     Sse::new(stream)
 }
-
-
-

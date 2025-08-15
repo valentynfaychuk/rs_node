@@ -54,7 +54,7 @@ function esc(s) {{
 
 pub fn rows(peers: &HashMap<SocketAddr, PeerInfo>) -> String {
     // snapshot & sort newest first
-    
+
     let mut v: Vec<&PeerInfo> = peers.values().collect();
     v.sort_by(|a, b| a.sk.as_deref().cmp(&b.sk.as_deref()));
 
@@ -83,11 +83,7 @@ pub fn rows(peers: &HashMap<SocketAddr, PeerInfo>) -> String {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
 }
 
 fn esc_opt(s: &Option<String>) -> String {

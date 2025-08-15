@@ -13,9 +13,8 @@ use std::{
 pub struct PeerInfo {
     pub addr: SocketAddr,
     pub last_seen_ms: u64,
-    pub sk: Option<String>,      // "full", "light", etc. If you can infer.
-    pub last_msg: Option<String>,  // e.g. "Ping", "Pong", "AttestationBulk"
-
+    pub sk: Option<String>,       // "full", "light", etc. If you can infer.
+    pub last_msg: Option<String>, // e.g. "Ping", "Pong", "AttestationBulk"
 }
 
 #[derive(Clone)]
@@ -26,17 +25,11 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        Self {
-            peers: Arc::new(RwLock::new(HashMap::new())),
-            entries: Arc::new(RwLock::new(vec![])),
-         }
+        Self { peers: Arc::new(RwLock::new(HashMap::new())), entries: Arc::new(RwLock::new(vec![])) }
     }
 
     fn now_ms() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
     }
 
     /// Upsert a peer record whenever we see a packet from them.

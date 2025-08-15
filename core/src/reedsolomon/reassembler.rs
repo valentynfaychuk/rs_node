@@ -24,19 +24,13 @@ struct ReassemblyKey {
 
 impl From<&MessageV2> for ReassemblyKey {
     fn from(msg: &MessageV2) -> Self {
-        Self {
-            pk: msg.pk.clone(),
-            ts_nano: msg.ts_nano,
-            shard_total: msg.shard_total,
-        }
+        Self { pk: msg.pk.clone(), ts_nano: msg.ts_nano, shard_total: msg.shard_total }
     }
 }
 
 impl PartialEq for ReassemblyKey {
     fn eq(&self, other: &Self) -> bool {
-        self.pk == other.pk
-            && self.ts_nano == other.ts_nano
-            && self.shard_total == other.shard_total
+        self.pk == other.pk && self.ts_nano == other.ts_nano && self.shard_total == other.shard_total
     }
 }
 
@@ -56,9 +50,7 @@ enum EntryState {
 
 impl ReedSolomonReassembler {
     pub fn new() -> Self {
-        Self {
-            reorg: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { reorg: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     pub fn start_periodic_cleanup(&self) {
@@ -73,16 +65,10 @@ impl ReedSolomonReassembler {
     }
 
     fn clear_stale(reorg: Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>) {
-        let now_nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
+        let now_nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let threshold = now_nanos.saturating_sub(8_000_000_000u128);
         let size_before = reorg.lock().unwrap().len();
-        reorg
-            .lock()
-            .unwrap()
-            .retain(|k, _| (k.ts_nano as u128) > threshold);
+        reorg.lock().unwrap().retain(|k, _| (k.ts_nano as u128) > threshold);
         let size_after = reorg.lock().unwrap().len();
         println!("cleared {}", size_before - size_after);
     }
@@ -101,10 +87,7 @@ impl ReedSolomonReassembler {
         let data_shards = (key.shard_total / 2) as usize;
         let parity_shards = data_shards; // same as Elixir: div(total,2), div(total,2)
 
-        let mut reorg = self
-            .reorg
-            .lock()
-            .map_err(|_| anyhow::anyhow!("reorg lock poisoned"))?;
+        let mut reorg = self.reorg.lock().map_err(|_| anyhow::anyhow!("reorg lock poisoned"))?;
         match reorg.get_mut(&key) {
             None => {
                 let mut m = HashMap::new();
@@ -123,10 +106,8 @@ impl ReedSolomonReassembler {
                 // Otherwise, we can attempt reassembly with existing m + this shard
                 // Build shard list first (while borrow is active), then drop borrow before mutating self.reorg
                 let shards: Vec<(usize, Vec<u8>)> = {
-                    let mut v: Vec<(usize, Vec<u8>)> = m
-                        .iter()
-                        .map(|(idx, bytes)| (*idx as usize, bytes.clone()))
-                        .collect();
+                    let mut v: Vec<(usize, Vec<u8>)> =
+                        m.iter().map(|(idx, bytes)| (*idx as usize, bytes.clone())).collect();
                     v.push((message.shard_index as usize, shard.clone()));
                     v
                 };
@@ -134,19 +115,11 @@ impl ReedSolomonReassembler {
                 // Now mark as spent
                 reorg.insert(key.clone(), EntryState::Spent);
 
-                println!(
-                    "reassembling from {} shards ({} total)",
-                    shards.len(),
-                    key.shard_total
-                );
+                println!("reassembling from {} shards ({} total)", shards.len(), key.shard_total);
 
                 let resource = create_resource(data_shards, parity_shards)?;
-                let payload = decode_shards(
-                    resource,
-                    shards,
-                    data_shards + parity_shards,
-                    message.original_size as usize,
-                )?;
+                let payload =
+                    decode_shards(resource, shards, data_shards + parity_shards, message.original_size as usize)?;
 
                 return Self::proc_msg(&key, &message.signature, &payload);
             }
@@ -155,11 +128,7 @@ impl ReedSolomonReassembler {
     }
 
     // TODO: rename this function
-    fn proc_msg(
-        key: &ReassemblyKey,
-        signature: &[u8],
-        payload: &[u8],
-    ) -> anyhow::Result<Option<NodeProto>> {
+    fn proc_msg(key: &ReassemblyKey, signature: &[u8], payload: &[u8]) -> anyhow::Result<Option<NodeProto>> {
         if !signature.is_empty() {
             // Align with Elixir: valid = BlsEx.verify?(pk, signature, Blake3.hash(pk<>payload), BLS12AggSig.dst_node())
             let mut hasher = blake3::Hasher::new();
@@ -172,9 +141,7 @@ impl ReedSolomonReassembler {
                     if let Ok(msg) = parse_nodeproto(payload) {
                         return Ok(Some(msg));
                     }
-                    Err(anyhow::anyhow!(
-                        "can't parse payload after signature verification"
-                    ))?
+                    Err(anyhow::anyhow!("can't parse payload after signature verification"))?
                 }
                 Err(_) => Err(anyhow::anyhow!("invalid bls signature"))?,
             }

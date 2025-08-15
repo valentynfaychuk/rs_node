@@ -10,33 +10,21 @@ pub struct ReedSolomonResource {
     pub p_decoder: Mutex<ReedSolomonDecoder>,
 }
 
-pub fn create_resource(
-    data_shards: usize,
-    recovery_shards: usize,
-) -> Result<ReedSolomonResource, Error> {
+pub fn create_resource(data_shards: usize, recovery_shards: usize) -> Result<ReedSolomonResource, Error> {
     let size_shard = SHARD_SIZE;
 
     let encoder = ReedSolomonEncoder::new(data_shards, recovery_shards, size_shard)
         .map_err(|_| anyhow!("can't create encoder"))?;
     let decoder = ReedSolomonDecoder::new(data_shards, recovery_shards, size_shard)
         .map_err(|_| anyhow!("can't create decoder"))?;
-    let resource = ReedSolomonResource {
-        p_encoder: Mutex::new(encoder),
-        p_decoder: Mutex::new(decoder),
-    };
+    let resource = ReedSolomonResource { p_encoder: Mutex::new(encoder), p_decoder: Mutex::new(decoder) };
     Ok(resource)
 }
 
-pub fn encode_shards(
-    resource: ReedSolomonResource,
-    data: &[u8],
-) -> Result<Vec<(usize, Vec<u8>)>, Error> {
+pub fn encode_shards(resource: ReedSolomonResource, data: &[u8]) -> Result<Vec<(usize, Vec<u8>)>, Error> {
     let chunk_size = SHARD_SIZE;
 
-    let mut encoder_lock = resource
-        .p_encoder
-        .lock()
-        .map_err(|_| anyhow!("poisoned mutex"))?;
+    let mut encoder_lock = resource.p_encoder.lock().map_err(|_| anyhow!("poisoned mutex"))?;
 
     let chunk_count = (data.len() + 1023) / SHARD_SIZE;
     let mut encoded_shards = Vec::with_capacity(chunk_count * 2);
@@ -51,9 +39,7 @@ pub fn encode_shards(
         let mut buffer = [0u8; SHARD_SIZE];
         buffer[..chunk.len()].copy_from_slice(chunk);
 
-        encoder_lock
-            .add_original_shard(&buffer)
-            .map_err(|_| anyhow!("can't add shard"))?;
+        encoder_lock.add_original_shard(&buffer).map_err(|_| anyhow!("can't add shard"))?;
 
         let bin = buffer.to_vec();
         encoded_shards.push((itr, bin));
@@ -77,10 +63,7 @@ pub fn decode_shards(
     total_shards: usize,
     original_size: usize,
 ) -> Result<Vec<u8>, Error> {
-    let mut decoder_lock = resource
-        .p_decoder
-        .lock()
-        .map_err(|_| anyhow!("poisoned mutex"))?;
+    let mut decoder_lock = resource.p_decoder.lock().map_err(|_| anyhow!("poisoned mutex"))?;
 
     let mut combined = vec![0u8; original_size];
 
@@ -95,13 +78,9 @@ pub fn decode_shards(
             let end = (offset + shard_data.len()).min(original_size);
             combined[offset..end].copy_from_slice(&shard_data[..(end - offset)]);
 
-            decoder_lock
-                .add_original_shard(index, shard_data)
-                .map_err(|_| anyhow!("can't add shard"))?;
+            decoder_lock.add_original_shard(index, shard_data).map_err(|_| anyhow!("can't add shard"))?;
         } else {
-            decoder_lock
-                .add_recovery_shard(index - half, bin.as_slice())
-                .map_err(|_| anyhow!("can't add shard"))?;
+            decoder_lock.add_recovery_shard(index - half, bin.as_slice()).map_err(|_| anyhow!("can't add shard"))?;
         }
     }
     let result = decoder_lock.decode().map_err(|_| anyhow!("can't decode"))?;

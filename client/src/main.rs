@@ -16,10 +16,8 @@ use plot::{serve, state::AppState};
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     // Target UDP address of an Amadeus node.
-    let addr: SocketAddr = std::env::var("UDP_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:36969".to_string())
-        .parse()
-        .expect("valid UDP_ADDR");
+    let addr: SocketAddr =
+        std::env::var("UDP_ADDR").unwrap_or_else(|_| "127.0.0.1:36969".to_string()).parse().expect("valid UDP_ADDR");
 
     // Bind a local UDP socket (Tokio).
     let socket = UdpSocket::bind("0.0.0.0:36969").await?;
@@ -87,12 +85,7 @@ async fn recv_loop(
                                     println!("attestation bulk ({})", src);
                                 }
                                 proto::NodeProto::Entry(e) => {
-                                    println!(
-                                        "entry ({}): height {} txs {}",
-                                        src,
-                                        &e.header.height,
-                                        &e.txs.len()
-                                    );
+                                    println!("entry ({}): height {} txs {}", src, &e.header.height, &e.txs.len());
                                 }
                                 _ => {
                                     println!("received {} bytes from {}", len, src);
@@ -104,10 +97,7 @@ async fn recv_loop(
                             // do nothing
                         }
                         Err(e) => {
-                            println!(
-                                "err packet, shard: {} {}, {}",
-                                &m.shard_index, &m.shard_total, e
-                            );
+                            println!("err packet, shard: {} {}, {}", &m.shard_index, &m.shard_total, e);
                             // parse error; do nothing (only add peers when msg is OK)
                         }
                     }

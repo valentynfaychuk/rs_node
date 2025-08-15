@@ -10,10 +10,7 @@ use axum::{
 };
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", get(list_entries))
-        .route("/:id", get(show_entry))
-        .with_state(state)
+    Router::new().route("/", get(list_entries)).route("/:id", get(show_entry)).with_state(state)
 }
 
 async fn list_entries(State(state): State<AppState>) -> Html<String> {
@@ -26,8 +23,5 @@ async fn show_entry(State(state): State<AppState>, Path(id): Path<String>) -> Ht
     let Some(e) = entries.iter().find(|e| e.id == id).cloned() else {
         return Html(layout::page("Not found", "<h1>Entry not found</h1>"));
     };
-    Html(layout::page(
-        &format!("Entry {}", id),
-        &entry_view::page(&e),
-    ))
+    Html(layout::page(&format!("Entry {}", id), &entry_view::page(&e)))
 }

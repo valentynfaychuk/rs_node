@@ -94,10 +94,7 @@ impl fmt::Debug for Attestation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Attestation")
             .field("entry_hash", &bs58::encode(&self.entry_hash).into_string())
-            .field(
-                "mutations_hash",
-                &bs58::encode(&self.mutations_hash).into_string(),
-            )
+            .field("mutations_hash", &bs58::encode(&self.mutations_hash).into_string())
             .field("signature", &bs58::encode(&self.signature).into_string())
             .field("signer", &bs58::encode(&self.signer).into_string())
             .finish()
