@@ -5,11 +5,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::shards::{create_resource, decode_shards};
 use crate::bls;
+use crate::misc::blake3 as b3;
 use crate::proto::{MessageV2, NodeProto};
 use crate::proto_enc::parse_nodeproto;
-use aes_gcm::{Aes256Gcm, Nonce, aead::Aead, aead::KeyInit};
-use blake3;
-use sha2::{Digest, Sha256};
 
 pub struct ReedSolomonReassembler {
     reorg: Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>,
@@ -74,18 +72,18 @@ impl ReedSolomonReassembler {
     }
 
     // Adds a shard to the reassembly buffer
-    // When enough shards collected, reconstructs triggers callback
+    // When enough shards collected, reconstructs
     pub fn add_shard(&self, message: &MessageV2) -> anyhow::Result<Option<NodeProto>> {
         let key = ReassemblyKey::from(message);
         let shard = &message.payload;
 
         // Some messages are single-shard only, so we can skip the reorg logic
         if key.shard_total == 1 {
-            return Self::proc_msg(&key, &message.signature, &shard);
+            return Self::verify_msg_sig(&key, &message.signature, &shard);
         }
 
         let data_shards = (key.shard_total / 2) as usize;
-        let parity_shards = data_shards; // same as Elixir: div(total,2), div(total,2)
+        let parity_shards = data_shards;
 
         let mut reorg = self.reorg.lock().map_err(|_| anyhow::anyhow!("reorg lock poisoned"))?;
         match reorg.get_mut(&key) {
@@ -115,28 +113,24 @@ impl ReedSolomonReassembler {
                 // Now mark as spent
                 reorg.insert(key.clone(), EntryState::Spent);
 
-                println!("reassembling from {} shards ({} total)", shards.len(), key.shard_total);
-
                 let resource = create_resource(data_shards, parity_shards)?;
                 let payload =
                     decode_shards(resource, shards, data_shards + parity_shards, message.original_size as usize)?;
 
-                return Self::proc_msg(&key, &message.signature, &payload);
+                return Self::verify_msg_sig(&key, &message.signature, &payload);
             }
         }
         Ok(None)
     }
 
-    // TODO: rename this function
-    fn proc_msg(key: &ReassemblyKey, signature: &[u8], payload: &[u8]) -> anyhow::Result<Option<NodeProto>> {
+    fn verify_msg_sig(key: &ReassemblyKey, signature: &[u8], payload: &[u8]) -> anyhow::Result<Option<NodeProto>> {
         if !signature.is_empty() {
-            // Align with Elixir: valid = BlsEx.verify?(pk, signature, Blake3.hash(pk<>payload), BLS12AggSig.dst_node())
-            let mut hasher = blake3::Hasher::new();
+            let mut hasher = b3::Hasher::new();
             hasher.update(&key.pk);
             hasher.update(payload);
             let msg_hash = hasher.finalize();
 
-            match bls::verify(&key.pk, signature, msg_hash.as_bytes(), bls::DST_NODE) {
+            match bls::verify(&key.pk, signature, &msg_hash, bls::DST_NODE) {
                 Ok(()) => {
                     if let Ok(msg) = parse_nodeproto(payload) {
                         return Ok(Some(msg));
@@ -145,46 +139,8 @@ impl ReedSolomonReassembler {
                 }
                 Err(_) => Err(anyhow::anyhow!("invalid bls signature"))?,
             }
-        } else {
-            // Right now, all messages are using signature, so this is for the future
-            let shared_secret: Option<Vec<u8>> = None;
-
-            // Encrypted path (AES-256-GCM). Follow Elixir reference.
-            // Layout: <<iv::12-binary, tag::16-binary, ciphertext::binary>>
-            if let Some(shared) = shared_secret {
-                if payload.len() >= 12 + 16 {
-                    let iv = &payload[0..12];
-                    let tag = &payload[12..28];
-                    let ciphertext = &payload[28..];
-
-                    // Derive key = sha256(shared_secret || ts_nano_be || iv)
-                    let mut hasher = Sha256::new();
-                    hasher.update(shared);
-                    hasher.update(key.ts_nano.to_be_bytes());
-                    hasher.update(iv);
-                    let key_bytes = hasher.finalize();
-
-                    // aes-gcm crate expects tag to be appended to ciphertext. Concatenate accordingly.
-                    let mut ct_with_tag = Vec::with_capacity(ciphertext.len() + 16);
-                    ct_with_tag.extend_from_slice(ciphertext);
-                    ct_with_tag.extend_from_slice(tag);
-
-                    // Initialize cipher
-                    if let Ok(cipher) = Aes256Gcm::new_from_slice(&key_bytes) {
-                        let nonce = Nonce::from_slice(iv);
-                        if let Ok(plaintext) = cipher.decrypt(nonce, ct_with_tag.as_ref()) {
-                            if let Ok(msg) = parse_nodeproto(&plaintext) {
-                                return Ok(Some(msg));
-                            }
-                            Err(anyhow::anyhow!("can't parse decrypted message"))?
-                        }
-                        Err(anyhow::anyhow!("invalid ciphertext"))?
-                    }
-                    Err(anyhow::anyhow!("invalid encryption key"))?
-                }
-                Err(anyhow::anyhow!(format!("payload len is {}", payload.len())))?
-            }
-            Err(anyhow::anyhow!("no shared_secret in message"))?
         }
+        // All messages must have signature
+        Err(anyhow::anyhow!("message has no signature"))
     }
 }

@@ -11,7 +11,7 @@ mod views {
 use axum::{response::Html, routing::get};
 use state::AppState;
 
-pub async fn serve(addr: &str, state: &AppState) -> anyhow::Result<()> {
+pub async fn serve(_addr: &str, state: &AppState) -> anyhow::Result<()> {
     // demo data
     let app = routes::app(state.clone())
         // simple home page that links to sections
@@ -38,6 +38,7 @@ pub async fn serve(addr: &str, state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64

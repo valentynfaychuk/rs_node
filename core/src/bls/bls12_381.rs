@@ -3,9 +3,8 @@ use group::Curve;
 
 // We use blst for signing/verification (hash_to_curve with DST) and serialization
 use blst::BLST_ERROR;
-use blst::min_pk::{PublicKey as BlstPublicKey, SecretKey as BlstSecretKey, Signature as BlstSignature};
+use blst::min_pk::{PublicKey as BlsPublicKey, SecretKey as BlsSecretKey, Signature as BlsSignature};
 
-/// Errors that can be returned by BLS operations
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid seed")]
@@ -85,11 +84,11 @@ fn parse_signature(bytes: &[u8]) -> Result<G2Projective, Error> {
     }
 }
 
-fn sign_from_scalar(scalar: Scalar, msg: &[u8], dst: &[u8]) -> Result<BlstSignature, Error> {
+fn sign_from_scalar(scalar: Scalar, msg: &[u8], dst: &[u8]) -> Result<BlsSignature, Error> {
     // Convert Scalar to big-endian bytes for blst SecretKey
     let mut sk_be = scalar.to_bytes();
     sk_be.reverse();
-    let sk = BlstSecretKey::from_bytes(&sk_be).map_err(|_| Error::InvalidSeed)?;
+    let sk = BlsSecretKey::from_bytes(&sk_be).map_err(|_| Error::InvalidSeed)?;
     Ok(sk.sign(msg, dst, &[]))
 }
 
@@ -111,8 +110,8 @@ pub fn sign(seed: &[u8], message: &[u8], dst: &[u8]) -> Result<Vec<u8>, Error> {
 
 /// Verify a signature using a compressed G1 public key (48 bytes) and signature (96 bytes).
 pub fn verify(pk_bytes: &[u8], sig_bytes: &[u8], msg: &[u8], dst: &[u8]) -> Result<(), Error> {
-    let pk = BlstPublicKey::deserialize(pk_bytes).map_err(|_| Error::InvalidPoint)?;
-    let sig = BlstSignature::deserialize(sig_bytes).map_err(|_| Error::InvalidSignature)?;
+    let pk = BlsPublicKey::deserialize(pk_bytes).map_err(|_| Error::InvalidPoint)?;
+    let sig = BlsSignature::deserialize(sig_bytes).map_err(|_| Error::InvalidSignature)?;
 
     let err = sig.verify(
         true, // hash_to_curve

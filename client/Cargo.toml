@@ -14,3 +14,4 @@ bs58 = "0.5.1"
 anyhow = "1.0.98"
 core = { workspace = true }
 plot = { workspace = true }
+hex = "0.4.3"

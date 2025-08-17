@@ -1,12 +1,12 @@
 use async_stream::stream;
 use axum::{
-    Json, Router,
+    Router,
     extract::State,
     response::{
         Html,
         sse::{Event, Sse},
     },
-    routing::{get, post},
+    routing::get,
 };
 use futures_core::Stream;
 use std::{convert::Infallible, time::Duration};

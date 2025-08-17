@@ -1,16 +1,13 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use core::genesis;
 use core::proto;
 use core::proto_enc;
-use core::reedsolomon::ReedSolomonReassembler;
+use core::reed_solomon::ReedSolomonReassembler;
 use core::test_data::ping::PING;
 
-use plot::state::PeerInfo;
 use plot::{serve, state::AppState};
 
 #[tokio::main]
@@ -76,19 +73,30 @@ async fn recv_loop(
                             let pk_str = bs58::encode(&m.pk).into_string();
                             app_state.seen_peer(src, Some(pk_str), Some(last_msg)).await;
 
-                            // keep your prints (optional: skip Ping spam)
-                            match msg {
-                                proto::NodeProto::Ping(_) => {
-                                    println!("ping ({})", src);
+                            match msg.handle() {
+                                proto::HandleResult::ReplyPong { .. } => {
+                                    //println!("reply pong: {}", ts_m);
                                 }
-                                proto::NodeProto::AttestationBulk(_) => {
-                                    println!("attestation bulk ({})", src);
+                                proto::HandleResult::ObservedPong { .. } => {
+                                    //println!("observed pong: {} {}", ts_m, seen_time_ms);
                                 }
-                                proto::NodeProto::Entry(e) => {
-                                    println!("entry ({}): height {} txs {}", src, &e.header.height, &e.txs.len());
+                                proto::HandleResult::ReceivedEntry { entry: _ } => {
+                                    //println!("{:?}", entry);
                                 }
-                                _ => {
-                                    println!("received {} bytes from {}", len, src);
+                                proto::HandleResult::ReceivedSol { sol } => {
+                                    println!("{:?}", sol);
+                                }
+                                proto::HandleResult::Attestations { .. } => {
+                                    //println!("received attestation bulk: {:?}", attestations);
+                                }
+                                proto::HandleResult::Error(e) => {
+                                    println!("err: {}", e);
+                                }
+                                proto::HandleResult::Noop => {
+                                    // do nothing
+                                }
+                                hr => {
+                                    println!("handle result {:?}", hr);
                                 }
                             }
                         }
