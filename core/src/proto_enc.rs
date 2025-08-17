@@ -28,6 +28,14 @@ impl From<DecodeError> for ParseError {
     }
 }
 
+impl From<tx::TxError> for ParseError {
+    fn from(_: tx::TxError) -> Self {
+        // We filter-out invalid txs; TxError should not bubble up in normal flow.
+        // Keep conversion for completeness if exposed in future.
+        ParseError::WrongType("tx_error")
+    }
+}
+
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -55,7 +63,7 @@ pub fn deflate_decompress(compressed: &[u8]) -> Result<Vec<u8>, std::io::Error> 
     decompress_to_vec(compressed).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
 }
 
-fn map_term_to_map(term: &Term) -> Result<std::collections::HashMap<Term, Term>, ParseError> {
+pub fn map_term_to_map(term: &Term) -> Result<std::collections::HashMap<Term, Term>, ParseError> {
     match term {
         Term::Map(m) => Ok(m.map.clone()),
         _ => Err(ParseError::WrongType("map")),
@@ -192,11 +200,14 @@ fn parse_entry_summary(term: Option<&Term>) -> Result<EntrySummary, ParseError> 
     Ok(EntrySummary { header: header.to_vec(), signature: signature.to_vec(), mask })
 }
 
+use crate::consensus::tx;
+use crate::consensus::tx::TxError;
 use eetf::{Binary, List};
-use num_traits::ToPrimitive; // already pulled by eetf
+use num_traits::ToPrimitive;
+// already pulled by eetf
 
 /// Lightweight helpers so you can keep calling `.atom()`, `.integer()`, etc.
-trait TermExt {
+pub trait TermExt {
     fn atom(&self) -> Option<&Atom>;
     fn integer(&self) -> Option<i64>;
     fn binary(&self) -> Option<&[u8]>;
@@ -237,6 +248,22 @@ impl TermExt for Term {
             None
         }
     }
+}
+
+pub fn get_map_field<'a>(map: &'a std::collections::HashMap<Term, Term>, key: &str) -> Option<&'a Term> {
+    map.get(&Term::Atom(Atom::from(key)))
+}
+
+pub fn to_string_required(t: &Term, field: &'static str) -> Result<String, TxError> {
+    t.string().ok_or(TxError::Missing(field))
+}
+
+pub fn to_binary_required(t: &Term, field: &'static str) -> Result<Vec<u8>, TxError> {
+    t.binary().map(|b| b.to_vec()).ok_or(TxError::Missing(field))
+}
+
+pub fn to_list_required<'a>(t: &'a Term, field: &'static str) -> Result<&'a [Term], TxError> {
+    t.list().ok_or(TxError::Missing(field))
 }
 
 pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
@@ -389,6 +416,7 @@ fn parse_header_from_bin(bin: &[u8]) -> Result<EntryHeader, ParseError> {
 
     Ok(EntryHeader { slot, dr, height, prev_hash, prev_slot, signer, txs_hash, vr })
 }
+
 fn parse_entry_from_bin(bin: &[u8]) -> Result<Entry, ParseError> {
     let t = Term::decode(bin)?;
     let m = match t {

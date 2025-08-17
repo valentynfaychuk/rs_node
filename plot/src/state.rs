@@ -1,4 +1,4 @@
-use crate::models::{Entry, Peer};
+use crate::models::Entry;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
