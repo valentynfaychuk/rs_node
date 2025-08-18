@@ -225,8 +225,6 @@ pub fn known_receivers(txu: &TxU) -> Vec<Vec<u8>> {
 pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, TxError> {
     let txu = unpack_etf(tx_packed)?;
 
-    println!("{:#?}", txu);
-
     // Compute canonical hash of tx_encoded
     let h = blake3::hash(&txu.tx_encoded);
     if txu.hash.as_slice() != h.as_ref() {

@@ -1,5 +1,4 @@
 use crate::bic::sol::SolParsed;
-use crate::consensus::entry::ParsedEntry;
 use crate::consensus::tx;
 use crate::proto_enc::ParseError;
 use eetf::convert::TryAsRef;

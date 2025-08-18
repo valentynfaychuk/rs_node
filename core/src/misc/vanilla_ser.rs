@@ -228,7 +228,7 @@ fn encode_varint(n: i128, out: &mut Vec<u8>) {
     }
     let sign_bit: u8 = if n >= 0 { 0 } else { 1 };
     let mag = magnitude_u128(n);
-    let mut be = mag.to_be_bytes();
+    let be = mag.to_be_bytes();
     // strip leading zeros
     let first_nz = be.iter().position(|&b| b != 0).unwrap_or(be.len() - 1);
     let bytes = &be[first_nz..];

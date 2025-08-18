@@ -74,17 +74,17 @@ async fn recv_loop(
                             app_state.seen_peer(src, Some(pk_str), Some(last_msg)).await;
 
                             match msg.handle() {
-                                proto::HandleResult::ReplyPong { ts_m } => {
+                                proto::HandleResult::ReplyPong { .. } => {
                                     //println!("reply pong: {}", ts_m);
                                 }
-                                proto::HandleResult::ObservedPong { ts_m, seen_time_ms } => {
+                                proto::HandleResult::ObservedPong { .. } => {
                                     //println!("observed pong: {} {}", ts_m, seen_time_ms);
                                 }
                                 proto::HandleResult::ReceivedEntry { entry } => {
                                     println!("{:#?}", entry);
                                 }
-                                proto::HandleResult::ReceivedSol { sol } => {
-                                    println!("{:?}", sol);
+                                proto::HandleResult::ReceivedSol { .. } => {
+                                    //println!("{:?}", sol);
                                 }
                                 proto::HandleResult::Attestations { .. } => {
                                     //println!("received attestation bulk: {:?}", attestations);

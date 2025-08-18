@@ -201,7 +201,7 @@ fn parse_entry_summary(term: Option<&Term>) -> Result<EntrySummary, ParseError> 
 }
 
 use crate::config::ENTRY_SIZE;
-use crate::consensus::entry::{parse_entry_from_bin, unpack_entry_and_validate};
+use crate::consensus::entry::unpack_entry_and_validate;
 use crate::consensus::tx;
 use crate::consensus::tx::TxError;
 use eetf::{Binary, List};
