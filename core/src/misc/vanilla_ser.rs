@@ -1,16 +1,15 @@
-// Wire format:
-// - 0 => nil
-// - 1 => true
-// - 2 => false
-// - 3 => integer: encode_varint
-// - 5 => binary/atom: encode_varint(len) + raw bytes
-// - 6 => list: encode_varint(len) + encoded elements
-// - 7 => map: encode_varint(len) + sorted (by key) [key, value] encoded pairs
-// Variant:
-// - 0 => single 0x00 byte
-// - otherwise: first byte has sign (MSB, 1 bit) and length in bytes (7 bits),
-//   followed by that many big-endian magnitude bytes. sign=0 => positive, sign=1 => negative.
-
+/// Custom wire format for encoding transactions:
+/// - 0 => nil
+/// - 1 => true
+/// - 2 => false
+/// - 3 => integer: encode_varint
+/// - 5 => binary/atom: encode_varint(len) + raw bytes
+/// - 6 => list: encode_varint(len) + encoded elements
+/// - 7 => map: encode_varint(len) + sorted (by key) [key, value] encoded pairs
+/// Variant:
+/// - 0 => single 0x00 byte
+/// - otherwise: first byte has sign (MSB, 1 bit) and length in bytes (7 bits),
+///   followed by that many big-endian magnitude bytes. sign=0 => positive, sign=1 => negative.
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
@@ -30,7 +29,7 @@ pub enum Error {
     UnexpectedEof,
     #[error("invalid type tag: {0}")]
     InvalidType(u8),
-    #[error("invalid varint encoding")]
+    #[error("invalid variant encoding")]
     InvalidVarInt,
     #[error("integer overflow (requires bigint)")]
     Overflow,

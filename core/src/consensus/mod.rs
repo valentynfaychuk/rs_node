@@ -1,6 +1,9 @@
+pub mod agg_sig;
 pub mod entry;
 pub mod kv;
 pub mod tx;
+
+pub use agg_sig::{AggSig, DST, DST_ATT, DST_ENTRY, DST_MOTION, DST_NODE, DST_POP, DST_TX, DST_VRF};
 
 /// TODO: return trainers for the given height
 pub fn trainers_for_height(_height: i64) -> Option<Vec<[u8; 48]>> {

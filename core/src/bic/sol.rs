@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 // Use internal Blake3 helpers (hash, freivalds) translated in Rust
 use crate::misc::blake3 as b3;
-use crate::proto::Sol;
+use crate::node::proto::Sol;
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 pub enum SolError {

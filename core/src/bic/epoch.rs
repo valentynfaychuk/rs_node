@@ -1,8 +1,9 @@
-use blake3;
+use crate::consensus::{DST_MOTION, DST_POP};
+use crate::misc::blake3;
+use crate::misc::bls12_381;
 
 use crate::bic::coin;
-use crate::bic::sol::{self, SolParsed};
-use crate::bls::{self, DST_MOTION, DST_POP};
+use crate::bic::sol;
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 pub enum EpochError {
@@ -110,29 +111,28 @@ impl Epoch {
 
     fn submit_sol(&self, env: &CallEnv, sol_bytes: &[u8]) -> Result<(), EpochError> {
         let hash = blake3::hash(sol_bytes);
-        let hash32: [u8; 32] = *hash.as_bytes();
-        let _segments = crate::bic::sol_bloom::segs(hash.as_bytes());
+        let _segments = crate::bic::sol_bloom::segs(&hash);
         // TODO: for each segment: kv_set_bit("bic:epoch:solbloom:{page}", bit_offset)
 
         // Unpack and verify epoch
         let parsed = sol::unpack(sol_bytes).map_err(|_| EpochError::InvalidSol)?;
         let (epoch, pk, pop) = match parsed {
-            SolParsed::V2(v2) => (v2.epoch as u64, v2.pk, v2.pop),
-            SolParsed::V1(v1) => (v1.epoch as u64, v1.pk, v1.pop),
-            SolParsed::V0(v0) => (v0.epoch as u64, v0.pk, v0.pop),
+            sol::SolParsed::V2(v2) => (v2.epoch as u64, v2.pk, v2.pop),
+            sol::SolParsed::V1(v1) => (v1.epoch as u64, v1.pk, v1.pop),
+            sol::SolParsed::V0(v0) => (v0.epoch as u64, v0.pk, v0.pop),
         };
         if epoch != env.entry_epoch {
             return Err(EpochError::InvalidEpoch);
         }
 
         // Use cached verification
-        let valid = sol::verify_with_hash(sol_bytes, &hash32).unwrap_or(false);
+        let valid = sol::verify_with_hash(sol_bytes, &hash).unwrap_or(false);
         if !valid {
             return Err(EpochError::InvalidSol);
         }
 
         // Verify Proof-of-Possession: message is pk bytes
-        if bls::verify(&pk, &pop, &pk, DST_POP).is_err() {
+        if bls12_381::verify(&pk, &pop, &pk, DST_POP).is_err() {
             return Err(EpochError::InvalidPop);
         }
 
@@ -204,7 +204,7 @@ pub fn slash_trainer_verify(
     }
 
     // Aggregate public keys and verify signature on the motion message
-    let apk = bls::aggregate_public_keys(signers.iter()).map_err(|_| EpochError::InvalidSignature)?;
+    let apk = bls12_381::aggregate_public_keys(signers.iter()).map_err(|_| EpochError::InvalidSignature)?;
 
     // msg = <<"slash_trainer", cur_epoch::32-little, malicious_pk::binary>>
     let mut msg = Vec::with_capacity("slash_trainer".len() + 4 + 48);
@@ -212,7 +212,7 @@ pub fn slash_trainer_verify(
     msg.extend_from_slice(&(cur_epoch as u32).to_le_bytes());
     msg.extend_from_slice(malicious_pk);
 
-    bls::verify(&apk, signature, &msg, DST_MOTION).map_err(|_| EpochError::InvalidSignature)
+    bls12_381::verify(&apk, signature, &msg, DST_MOTION).map_err(|_| EpochError::InvalidSignature)
 }
 
 /// Return the subset of trainers whose corresponding bits are set in the bitmask

@@ -1,5 +1,6 @@
-use crate::bls::{self, DST_TX};
+use crate::consensus::DST_TX;
 use crate::misc::blake3;
+use crate::misc::bls12_381;
 use crate::misc::vanilla_ser::{self, Value};
 use std::collections::BTreeMap;
 
@@ -29,7 +30,7 @@ pub struct TxU {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum TxError {
+pub enum Error {
     #[error("etf decode error")]
     Decode,
     #[error("wrong term type: {0}")]
@@ -76,19 +77,19 @@ pub enum TxError {
     AttachedSymbolMustBeIncluded,
 }
 
-pub fn unpack_etf(tx_packed: &[u8]) -> Result<TxU, TxError> {
+pub fn unpack_etf(tx_packed: &[u8]) -> Result<TxU, Error> {
     // Decode outer map via VanillaSer
-    let outer_val = vanilla_ser::decode_all(tx_packed).map_err(|_| TxError::Decode)?;
+    let outer_val = vanilla_ser::decode_all(tx_packed).map_err(|_| Error::Decode)?;
     let outer = match &outer_val {
         Value::Map(m) => m,
-        _ => return Err(TxError::WrongType("outer_map")),
+        _ => return Err(Error::WrongType("outer_map")),
     };
     // Helper to get a required bytes field
-    let get_bytes = |m: &BTreeMap<Value, Value>, key: &'static str| -> Result<Vec<u8>, TxError> {
+    let get_bytes = |m: &BTreeMap<Value, Value>, key: &'static str| -> Result<Vec<u8>, Error> {
         match m.get(&Value::Bytes(key.as_bytes().to_vec())) {
             Some(Value::Bytes(b)) => Ok(b.clone()),
-            Some(_) => Err(TxError::WrongType(key)),
-            None => Err(TxError::Missing(key)),
+            Some(_) => Err(Error::WrongType(key)),
+            None => Err(Error::Missing(key)),
         }
     };
     let tx_encoded = get_bytes(outer, "tx_encoded")?;
@@ -96,61 +97,61 @@ pub fn unpack_etf(tx_packed: &[u8]) -> Result<TxU, TxError> {
     let signature = get_bytes(outer, "signature")?;
 
     // Decode inner tx map
-    let inner_val = vanilla_ser::decode_all(&tx_encoded).map_err(|_| TxError::Decode)?;
+    let inner_val = vanilla_ser::decode_all(&tx_encoded).map_err(|_| Error::Decode)?;
     let inner = match &inner_val {
         Value::Map(m) => m,
-        _ => return Err(TxError::WrongType("tx_map")),
+        _ => return Err(Error::WrongType("tx_map")),
     };
 
     let signer = get_bytes(inner, "signer")?;
     let nonce = match inner.get(&Value::Bytes(b"nonce".to_vec())) {
-        Some(Value::Int(i)) => i64::try_from(*i).map_err(|_| TxError::NonceNotInteger)?,
-        Some(_) => return Err(TxError::NonceNotInteger),
-        None => return Err(TxError::Missing("nonce")),
+        Some(Value::Int(i)) => i64::try_from(*i).map_err(|_| Error::NonceNotInteger)?,
+        Some(_) => return Err(Error::NonceNotInteger),
+        None => return Err(Error::Missing("nonce")),
     };
 
     let actions_val = match inner.get(&Value::Bytes(b"actions".to_vec())) {
         Some(v) => v,
-        None => return Err(TxError::Missing("actions")),
+        None => return Err(Error::Missing("actions")),
     };
     let actions_list = match actions_val {
         Value::List(list) => list,
-        _ => return Err(TxError::ActionsNotList),
+        _ => return Err(Error::ActionsNotList),
     };
 
     let mut actions: Vec<TxAction> = Vec::with_capacity(actions_list.len());
     for a_val in actions_list {
         let amap = match a_val {
             Value::Map(m) => m,
-            _ => return Err(TxError::WrongType("action_map")),
+            _ => return Err(Error::WrongType("action_map")),
         };
         let op_bytes = get_bytes(amap, "op")?;
-        let op = String::from_utf8(op_bytes).map_err(|_| TxError::WrongType("op_string"))?;
+        let op = String::from_utf8(op_bytes).map_err(|_| Error::WrongType("op_string"))?;
         let contract = get_bytes(amap, "contract")?;
         let function_bytes = get_bytes(amap, "function")?;
-        let function = String::from_utf8(function_bytes).map_err(|_| TxError::WrongType("function_string"))?;
+        let function = String::from_utf8(function_bytes).map_err(|_| Error::WrongType("function_string"))?;
 
-        let args_v = amap.get(&Value::Bytes(b"args".to_vec())).ok_or(TxError::Missing("args"))?;
+        let args_v = amap.get(&Value::Bytes(b"args".to_vec())).ok_or(Error::Missing("args"))?;
         let args_l = match args_v {
             Value::List(l) => l,
-            _ => return Err(TxError::ArgsMustBeList),
+            _ => return Err(Error::ArgsMustBeList),
         };
         let mut args: Vec<Vec<u8>> = Vec::with_capacity(args_l.len());
         for t in args_l {
             match t {
                 Value::Bytes(b) => args.push(b.clone()),
-                _ => return Err(TxError::ArgMustBeBinary),
+                _ => return Err(Error::ArgMustBeBinary),
             }
         }
 
         let attached_symbol = match amap.get(&Value::Bytes(b"attached_symbol".to_vec())) {
             Some(Value::Bytes(b)) => Some(b.clone()),
-            Some(_) => return Err(TxError::AttachedSymbolMustBeBinary),
+            Some(_) => return Err(Error::AttachedSymbolMustBeBinary),
             None => None,
         };
         let attached_amount = match amap.get(&Value::Bytes(b"attached_amount".to_vec())) {
             Some(Value::Bytes(b)) => Some(b.clone()),
-            Some(_) => return Err(TxError::AttachedAmountMustBeBinary),
+            Some(_) => return Err(Error::AttachedAmountMustBeBinary),
             None => None,
         };
 
@@ -174,7 +175,7 @@ pub fn valid_pk(pk: &[u8]) -> bool {
             }
         }
     }
-    bls::validate_public_key(pk).is_ok()
+    bls12_381::validate_public_key(pk).is_ok()
 }
 
 pub fn known_receivers(txu: &TxU) -> Vec<Vec<u8>> {
@@ -222,37 +223,37 @@ pub fn known_receivers(txu: &TxU) -> Vec<Vec<u8>> {
     vec![]
 }
 
-pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, TxError> {
+pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, Error> {
     let txu = unpack_etf(tx_packed)?;
 
     // Compute canonical hash of tx_encoded
     let h = blake3::hash(&txu.tx_encoded);
     if txu.hash.as_slice() != h.as_ref() {
-        return Err(TxError::InvalidHash);
+        return Err(Error::InvalidHash);
     }
 
     // Verify signature over hash with DST_TX
-    bls::verify(&txu.tx.signer, &txu.signature, &h, DST_TX).map_err(|_| TxError::InvalidSignature)?;
+    bls12_381::verify(&txu.tx.signer, &txu.signature, &h, DST_TX).map_err(|_| Error::InvalidSignature)?;
 
     // Nonce checks (Elixir allowed up to 99..(20 digits); here we skip as nonce is i64 already)
 
     // Actions checks
     if txu.tx.actions.is_empty() {
-        return Err(TxError::ActionsNotList);
+        return Err(Error::ActionsNotList);
     }
     if txu.tx.actions.len() != 1 {
-        return Err(TxError::ActionsLenNot1);
+        return Err(Error::ActionsLenNot1);
     }
     let a = &txu.tx.actions[0];
 
     if a.op != "call" {
-        return Err(TxError::OpMustBeCall);
+        return Err(Error::OpMustBeCall);
     }
     if a.contract.is_empty() {
-        return Err(TxError::ContractMustBeBinary);
+        return Err(Error::ContractMustBeBinary);
     }
     if a.function.is_empty() {
-        return Err(TxError::FunctionMustBeBinary);
+        return Err(Error::FunctionMustBeBinary);
     }
 
     // Args already validated as binaries during unpack
@@ -267,17 +268,17 @@ pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Resul
         || a.function == "deploy";
 
     let valid_contract_fn =
-        if allowed_contract { allowed_function } else { bls::validate_public_key(&a.contract).is_ok() };
+        if allowed_contract { allowed_function } else { bls12_381::validate_public_key(&a.contract).is_ok() };
     if !valid_contract_fn {
-        return Err(TxError::InvalidContractOrFunction);
+        return Err(Error::InvalidContractOrFunction);
     }
 
     if is_special_meeting_block {
         if !is_ascii_eq(&a.contract, "Epoch") {
-            return Err(TxError::InvalidModuleForSpecial);
+            return Err(Error::InvalidModuleForSpecial);
         }
         if a.function != "slash_trainer" {
-            return Err(TxError::InvalidFunctionForSpecial);
+            return Err(Error::InvalidFunctionForSpecial);
         }
     }
 
@@ -285,21 +286,21 @@ pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Resul
     if let Some(sym) = &a.attached_symbol {
         // must be binary and 1..32
         if sym.is_empty() || sym.len() > 32 {
-            return Err(TxError::AttachedSymbolWrongSize);
+            return Err(Error::AttachedSymbolWrongSize);
         }
         if a.attached_amount.is_none() {
-            return Err(TxError::AttachedAmountMustBeIncluded);
+            return Err(Error::AttachedAmountMustBeIncluded);
         }
     }
     if a.attached_amount.is_some() && a.attached_symbol.is_none() {
-        return Err(TxError::AttachedSymbolMustBeIncluded);
+        return Err(Error::AttachedSymbolMustBeIncluded);
     }
 
     Ok(txu)
 }
 
 /// Validate wrapper mirroring Elixir TX.validate/2, delegating to validate_basic.
-pub fn validate(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, TxError> {
+pub fn validate(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, Error> {
     validate_basic(tx_packed, is_special_meeting_block)
 }
 

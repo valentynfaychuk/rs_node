@@ -1,10 +1,4 @@
-// BLS12_AggSig translation from Elixir (core/src/bls/bls12_aggsig.ex)
-// This module provides:
-// - Protocol-specific DST constants
-// - A simple aggregate signature tracker with a signer mask
-// - Helper methods to add signatures, list signed trainers, and compute score
-
-use super::{Error, aggregate_signatures};
+use crate::misc::bls12_381::{Error, aggregate_signatures};
 
 // Domain Separation Tags (DST), aligned with the Elixir implementation
 pub const DST: &[u8] = b"AMADEUS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";

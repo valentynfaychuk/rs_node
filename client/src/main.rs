@@ -3,9 +3,9 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use core::proto;
-use core::proto_enc;
-use core::reed_solomon::ReedSolomonReassembler;
+use core::node::ReedSolomonReassembler;
+use core::node::proto::{HandleResult, NodeProto};
+use core::node::proto_ser::unpack_message_v2;
 use core::test_data::ping::PING;
 
 use plot::{serve, state::AppState};
@@ -63,8 +63,8 @@ async fn recv_loop(
             Ok(Ok((len, src))) => {
                 let data = &buf[..len];
 
-                if let Ok(m) = proto_enc::unpack_message_v2(data) {
-                    match reassembler.add_shard(&m) {
+                if let Ok(m) = unpack_message_v2(data) {
+                    match reassembler.add_shard(&m).await {
                         Ok(Some(msg)) => {
                             // final shard received - reassembler assembled the message
                             // record the peer as seen on ANY successfully parsed message
@@ -74,25 +74,25 @@ async fn recv_loop(
                             app_state.seen_peer(src, Some(pk_str), Some(last_msg)).await;
 
                             match msg.handle() {
-                                proto::HandleResult::ReplyPong { .. } => {
+                                HandleResult::ReplyPong { .. } => {
                                     //println!("reply pong: {}", ts_m);
                                 }
-                                proto::HandleResult::ObservedPong { .. } => {
+                                HandleResult::ObservedPong { .. } => {
                                     //println!("observed pong: {} {}", ts_m, seen_time_ms);
                                 }
-                                proto::HandleResult::ReceivedEntry { entry } => {
+                                HandleResult::ReceivedEntry { entry } => {
                                     println!("{:#?}", entry);
                                 }
-                                proto::HandleResult::ReceivedSol { .. } => {
+                                HandleResult::ReceivedSol { .. } => {
                                     //println!("{:?}", sol);
                                 }
-                                proto::HandleResult::Attestations { .. } => {
+                                HandleResult::Attestations { .. } => {
                                     //println!("received attestation bulk: {:?}", attestations);
                                 }
-                                proto::HandleResult::Error(e) => {
+                                HandleResult::Error(e) => {
                                     println!("err: {}", e);
                                 }
-                                proto::HandleResult::Noop => {
+                                HandleResult::Noop => {
                                     // do nothing
                                 }
                                 hr => {
@@ -116,8 +116,8 @@ async fn recv_loop(
 }
 
 /// Small helper: a stable human-readable tag for the enum variant.
-fn variant_tag(m: &proto::NodeProto) -> &'static str {
-    use proto::NodeProto::*;
+fn variant_tag(m: &NodeProto) -> &'static str {
+    use NodeProto::*;
     match m {
         Ping(_) => "Ping",
         Pong(_) => "Pong",

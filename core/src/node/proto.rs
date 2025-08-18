@@ -1,6 +1,6 @@
+use super::proto_ser::Error;
 use crate::bic::sol::SolParsed;
 use crate::consensus::tx;
-use crate::proto_enc::ParseError;
 use eetf::convert::TryAsRef;
 use eetf::{Binary, List, Term};
 use std::fmt;
@@ -56,23 +56,23 @@ impl fmt::Debug for EntryHeader {
 }
 
 impl EntryHeader {
-    pub fn validate(&self) -> Result<(), ParseError> {
+    pub fn validate(&self) -> Result<(), Error> {
         // Required lengths based on protocol:
         // - dr: 32 bytes
         // - prev_hash: 32 bytes
         // - txs_hash: 32 bytes
         // - signer: 48 bytes
         if self.dr.len() != 32 {
-            return Err(ParseError::WrongType("entry_header_dr_len"));
+            return Err(Error::WrongType("entry_header_dr_len"));
         }
         if self.prev_hash.len() != 32 {
-            return Err(ParseError::WrongType("prev_hash_len"));
+            return Err(Error::WrongType("prev_hash_len"));
         }
         if self.txs_hash.len() != 32 {
-            return Err(ParseError::WrongType("txs_hash_len"));
+            return Err(Error::WrongType("txs_hash_len"));
         }
         if self.signer.len() != 48 {
-            return Err(ParseError::WrongType("signer_len"));
+            return Err(Error::WrongType("signer_len"));
         }
         Ok(())
     }
@@ -98,7 +98,7 @@ impl fmt::Debug for Entry {
 }
 
 impl Entry {
-    pub fn validate(&self) -> Result<(), ParseError> {
+    pub fn validate(&self) -> Result<(), Error> {
         // TODO: cryptographic checks: verify signature over header and hash; validate VR, DR fields.
         // TODO: dedup by checking existence in Fabric/RocksDB; insert into Fabric if new; trigger tick.
         // TODO: handle optional consensus_packed or attestation_packed from the message when parser supports them.
@@ -107,10 +107,10 @@ impl Entry {
         // - hash: 32 bytes
         // - signature: 96 bytes
         if self.hash.len() != 32 {
-            return Err(ParseError::WrongType("entry_hash_len"));
+            return Err(Error::WrongType("entry_hash_len"));
         }
         if self.signature.len() != 96 {
-            return Err(ParseError::WrongType("entry_signature_len"));
+            return Err(Error::WrongType("entry_signature_len"));
         }
 
         self.header.validate()
@@ -147,18 +147,18 @@ pub struct TxPool {
 
 impl TxPool {
     /// Returns valid tx binaries.
-    pub fn get_valid_txs(&self) -> Result<Vec<Vec<u8>>, ParseError> {
+    pub fn get_valid_txs(&self) -> Result<Vec<Vec<u8>>, Error> {
         Self::parse_and_filter_txs(&self.txs_packed)
     }
 
     /// Decodes an ETF-encoded list of binary transactions, validates each, and returns only the valid ones.
-    fn parse_and_filter_txs(txs_packed_blob: &[u8]) -> Result<Vec<Vec<u8>>, ParseError> {
+    fn parse_and_filter_txs(txs_packed_blob: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
         let term = Term::decode(txs_packed_blob)?;
 
         let list = if let Some(l) = TryAsRef::<List>::try_as_ref(&term) {
             &l.elements
         } else {
-            return Err(ParseError::WrongType("txs_packed must be list"));
+            return Err(Error::WrongType("txs_packed must be list"));
         };
 
         let mut good: Vec<Vec<u8>> = Vec::with_capacity(list.len());
@@ -390,6 +390,6 @@ mod tests {
         etf.encode(&mut buf).expect("encode");
 
         let err = TxPool::parse_and_filter_txs(&buf).err().unwrap();
-        matches!(err, ParseError::WrongType(_));
+        matches!(err, Error::WrongType(_));
     }
 }

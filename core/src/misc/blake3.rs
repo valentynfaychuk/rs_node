@@ -1,5 +1,6 @@
-#![allow(non_snake_case)]
+#![allow(non_snake_case)] // for readability
 /// Translated from https://github.com/vans163/blake3
+/// Infallible implementation of Blake3 hashing algorithm
 pub struct Hasher(blake3::Hasher);
 
 impl Hasher {

@@ -1,5 +1,5 @@
-use crate::bls;
 use crate::consensus::kv;
+use crate::misc::bls12_381;
 
 pub const DECIMALS: u32 = 9;
 pub const BURN_ADDRESS: [u8; 48] = [0u8; 48];
@@ -131,7 +131,7 @@ fn validate_receiver_pk(receiver: &[u8]) -> Result<[u8; 48], CoinError> {
     if pk == BURN_ADDRESS {
         return Ok(pk);
     }
-    if bls::validate_public_key(&pk).is_ok() { Ok(pk) } else { Err(CoinError::InvalidReceiverPk) }
+    if bls12_381::validate_public_key(&pk).is_ok() { Ok(pk) } else { Err(CoinError::InvalidReceiverPk) }
 }
 
 fn parse_bool_str(bytes: &[u8]) -> Option<bool> {

@@ -1,16 +1,30 @@
+use crate::consensus::DST_NODE;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
+// does not poison mutex on panic
 
-use super::shards::{create_resource, decode_shards};
-use crate::bls;
-use crate::misc::blake3 as b3;
-use crate::proto::{MessageV2, NodeProto};
-use crate::proto_enc::parse_nodeproto;
+use super::proto::{MessageV2, NodeProto};
+use super::proto_ser::parse_nodeproto;
+use crate::misc::bls12_381;
+use crate::misc::reed_solomon::ReedSolomonResource;
 
 pub struct ReedSolomonReassembler {
     reorg: Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    ReedSolomon(#[from] crate::misc::reed_solomon::Error),
+    #[error(transparent)]
+    ParseError(#[from] super::proto_ser::Error),
+    #[error(transparent)]
+    Bls(#[from] bls12_381::Error),
+    #[error("message has no signature")]
+    NoSignature,
 }
 
 #[derive(Clone, Debug, Eq)]
@@ -51,29 +65,30 @@ impl ReedSolomonReassembler {
         Self { reorg: Arc::new(Mutex::new(HashMap::new())) }
     }
 
+    /// This starts a timer that clears outdated reassemblies
     pub fn start_periodic_cleanup(&self) {
         let reorg = self.reorg.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(8));
             loop {
                 interval.tick().await;
-                Self::clear_stale(reorg.clone());
+                Self::clear_stale(reorg.clone()).await;
             }
         });
     }
 
-    fn clear_stale(reorg: Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>) {
+    async fn clear_stale(reorg: Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>) {
         let now_nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let threshold = now_nanos.saturating_sub(8_000_000_000u128);
-        let size_before = reorg.lock().unwrap().len();
-        reorg.lock().unwrap().retain(|k, _| (k.ts_nano as u128) > threshold);
-        let size_after = reorg.lock().unwrap().len();
-        println!("cleared {}", size_before - size_after);
+        let mut reorg = reorg.lock().await;
+        let size_before = reorg.len();
+        reorg.retain(|k, _| (k.ts_nano as u128) > threshold);
+        println!("cleared {}", size_before - reorg.len());
     }
 
     // Adds a shard to the reassembly buffer
     // When enough shards collected, reconstructs
-    pub fn add_shard(&self, message: &MessageV2) -> anyhow::Result<Option<NodeProto>> {
+    pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<NodeProto>, Error> {
         let key = ReassemblyKey::from(message);
         let shard = &message.payload;
 
@@ -85,7 +100,7 @@ impl ReedSolomonReassembler {
         let data_shards = (key.shard_total / 2) as usize;
         let parity_shards = data_shards;
 
-        let mut reorg = self.reorg.lock().map_err(|_| anyhow::anyhow!("reorg lock poisoned"))?;
+        let mut reorg = self.reorg.lock().await;
         match reorg.get_mut(&key) {
             None => {
                 let mut m = HashMap::new();
@@ -113,9 +128,9 @@ impl ReedSolomonReassembler {
                 // Now mark as spent
                 reorg.insert(key.clone(), EntryState::Spent);
 
-                let resource = create_resource(data_shards, parity_shards)?;
-                let payload =
-                    decode_shards(resource, shards, data_shards + parity_shards, message.original_size as usize)?;
+                let msg_size = message.original_size as usize;
+                let mut rs_res = ReedSolomonResource::new(data_shards, parity_shards)?;
+                let payload = rs_res.decode_shards(shards, data_shards + parity_shards, msg_size)?;
 
                 return Self::verify_msg_sig(&key, &message.signature, &payload);
             }
@@ -123,24 +138,21 @@ impl ReedSolomonReassembler {
         Ok(None)
     }
 
-    fn verify_msg_sig(key: &ReassemblyKey, signature: &[u8], payload: &[u8]) -> anyhow::Result<Option<NodeProto>> {
-        if !signature.is_empty() {
-            let mut hasher = b3::Hasher::new();
-            hasher.update(&key.pk);
-            hasher.update(payload);
-            let msg_hash = hasher.finalize();
+    fn verify_msg_sig(key: &ReassemblyKey, signature: &[u8], payload: &[u8]) -> Result<Option<NodeProto>, Error> {
+        use crate::misc::blake3 as b3; // use more efficient blake3
 
-            match bls::verify(&key.pk, signature, &msg_hash, bls::DST_NODE) {
-                Ok(()) => {
-                    if let Ok(msg) = parse_nodeproto(payload) {
-                        return Ok(Some(msg));
-                    }
-                    Err(anyhow::anyhow!("can't parse payload after signature verification"))?
-                }
-                Err(_) => Err(anyhow::anyhow!("invalid bls signature"))?,
-            }
+        if signature.is_empty() {
+            return Err(Error::NoSignature);
         }
-        // All messages must have signature
-        Err(anyhow::anyhow!("message has no signature"))
+
+        let mut hasher = b3::Hasher::new();
+        hasher.update(&key.pk);
+        hasher.update(payload);
+        let msg_hash = hasher.finalize();
+
+        bls12_381::verify(&key.pk, signature, &msg_hash, DST_NODE)?;
+        let parsed = parse_nodeproto(payload)?;
+
+        Ok(Some(parsed))
     }
 }

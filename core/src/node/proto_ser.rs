@@ -1,60 +1,20 @@
-use crate::proto::*;
-use eetf::DecodeError;
+use super::proto::*;
 use eetf::convert::TryAsRef;
 use eetf::{Atom, Term};
-use std::{error::Error, fmt};
+use num_traits::ToPrimitive;
 
-#[derive(Debug)]
-pub enum ParseError {
-    /// Failed while reading or inflating bytes.
-    Io(std::io::Error),
-    /// ETF decoding failed.
-    Decode(DecodeError),
-    /// A required field is absent.
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    EtfDecode(#[from] eetf::DecodeError),
+    #[error(transparent)]
+    TxError(#[from] crate::consensus::tx::Error),
+    #[error("missing required field: {0}")]
     Missing(&'static str),
-    /// The term/type found in the ETF stream is not what we expected.
+    #[error("wrong type, expected: {0}")]
     WrongType(&'static str),
-}
-
-impl From<std::io::Error> for ParseError {
-    fn from(e: std::io::Error) -> Self {
-        ParseError::Io(e)
-    }
-}
-
-impl From<DecodeError> for ParseError {
-    fn from(e: DecodeError) -> Self {
-        ParseError::Decode(e)
-    }
-}
-
-impl From<tx::TxError> for ParseError {
-    fn from(_: tx::TxError) -> Self {
-        // We filter-out invalid txs; TxError should not bubble up in normal flow.
-        // Keep conversion for completeness if exposed in future.
-        ParseError::WrongType("tx_error")
-    }
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParseError::Io(e) => write!(f, "I/O error: {e}"),
-            ParseError::Decode(e) => write!(f, "ETF decode error: {e}"),
-            ParseError::Missing(key) => write!(f, "required key \"{key}\" is missing"),
-            ParseError::WrongType(t) => write!(f, "unexpected type, expected {t}"),
-        }
-    }
-}
-
-impl Error for ParseError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            ParseError::Io(e) => Some(e),
-            ParseError::Decode(e) => Some(e),
-            _ => None,
-        }
-    }
 }
 
 use miniz_oxide::inflate::decompress_to_vec;
@@ -63,81 +23,74 @@ pub fn deflate_decompress(compressed: &[u8]) -> Result<Vec<u8>, std::io::Error> 
     decompress_to_vec(compressed).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
 }
 
-pub fn map_term_to_map(term: &Term) -> Result<std::collections::HashMap<Term, Term>, ParseError> {
+pub fn map_term_to_map(term: &Term) -> Result<std::collections::HashMap<Term, Term>, Error> {
     match term {
         Term::Map(m) => Ok(m.map.clone()),
-        _ => Err(ParseError::WrongType("map")),
+        _ => Err(Error::WrongType("map")),
     }
 }
 
-fn parse_attestation_from_bin(bin: &[u8]) -> Result<Attestation, ParseError> {
+fn parse_attestation_from_bin(bin: &[u8]) -> Result<Attestation, Error> {
     let t = Term::decode(bin)?; // nested ETF
     let m = map_term_to_map(&t)?; // as HashMap<Term, Term>
 
     let entry_hash = m
         .get(&Term::Atom(Atom::from("entry_hash")))
         .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("entry_hash"))?
+        .ok_or(Error::Missing("entry_hash"))?
         .to_vec();
 
     let mutations_hash = m
         .get(&Term::Atom(Atom::from("mutations_hash")))
         .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("mutations_hash"))?
+        .ok_or(Error::Missing("mutations_hash"))?
         .to_vec();
 
     let signature = m
         .get(&Term::Atom(Atom::from("signature")))
         .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("signature"))?
+        .ok_or(Error::Missing("signature"))?
         .to_vec();
 
-    let signer = m
-        .get(&Term::Atom(Atom::from("signer")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("signer"))?
-        .to_vec();
+    let signer =
+        m.get(&Term::Atom(Atom::from("signer"))).and_then(|t| t.binary()).ok_or(Error::Missing("signer"))?.to_vec();
 
     Ok(Attestation { entry_hash, mutations_hash, signature, signer })
 }
 /// Parse any NodeProto message.
-pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
+pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, Error> {
     let decompressed = deflate_decompress(buf)?;
     let term = Term::decode(&decompressed[..])?; // decode ETF
 
     // Turn the ETF map into a real HashMap so `.get()` works
     let map = match term {
         Term::Map(m) => m.map.clone(),
-        _ => return Err(ParseError::WrongType("map")),
+        _ => return Err(Error::WrongType("map")),
     };
 
     // `op` determines the variant.
-    let op_atom = map.get(&Term::Atom(Atom::from("op"))).and_then(|t| t.atom()).ok_or(ParseError::Missing("op"))?;
+    let op_atom = map.get(&Term::Atom(Atom::from("op"))).and_then(|t| t.atom()).ok_or(Error::Missing("op"))?;
 
     match op_atom.name.as_str() {
         "ping" => {
             let temporal = parse_entry_summary(map.get(&Term::Atom(Atom::from("temporal"))))?;
             let rooted = parse_entry_summary(map.get(&Term::Atom(Atom::from("rooted"))))?;
-            let ts_m = map
-                .get(&Term::Atom(Atom::from("ts_m")))
-                .and_then(|t| t.integer())
-                .ok_or(ParseError::Missing("ts_m"))?;
+            let ts_m =
+                map.get(&Term::Atom(Atom::from("ts_m"))).and_then(|t| t.integer()).ok_or(Error::Missing("ts_m"))?;
             Ok(NodeProto::Ping(Ping { temporal, rooted, ts_m }))
         }
         "pong" => {
-            let ts_m = map
-                .get(&Term::Atom(Atom::from("ts_m")))
-                .and_then(|t| t.integer())
-                .ok_or(ParseError::Missing("ts_m"))?;
+            let ts_m =
+                map.get(&Term::Atom(Atom::from("ts_m"))).and_then(|t| t.integer()).ok_or(Error::Missing("ts_m"))?;
             Ok(NodeProto::Pong(Pong { ts_m }))
         }
         "entry" => {
             let bin = map
                 .get(&Term::Atom(Atom::from("entry_packed")))
                 .and_then(|t| t.binary())
-                .ok_or(ParseError::Missing("entry_packed"))?;
+                .ok_or(Error::Missing("entry_packed"))?;
 
-            let entry = unpack_entry_and_validate(bin, ENTRY_SIZE).map_err(Into::<ParseError>::into)?;
+            let entry = unpack_entry_and_validate(bin, ENTRY_SIZE).map_err(Into::<Error>::into)?;
             Ok(NodeProto::Entry(entry))
         }
         "who_are_you" => Ok(NodeProto::WhoAreYou(WhoAreYou)),
@@ -145,17 +98,16 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
             let txs = map
                 .get(&Term::Atom(Atom::from("txs_packed")))
                 .and_then(|t| t.binary())
-                .ok_or(ParseError::Missing("txs_packed"))?;
+                .ok_or(Error::Missing("txs_packed"))?;
             Ok(NodeProto::TxPool(TxPool { txs_packed: txs.to_vec() }))
         }
         "peers" => {
-            let list =
-                map.get(&Term::Atom(Atom::from("ips"))).and_then(|t| t.list()).ok_or(ParseError::Missing("ips"))?;
+            let list = map.get(&Term::Atom(Atom::from("ips"))).and_then(|t| t.list()).ok_or(Error::Missing("ips"))?;
             let ips = list
                 .iter()
                 .map(|t| t.string().map(|s| s.to_string()))
                 .collect::<Option<Vec<_>>>()
-                .ok_or(ParseError::WrongType("ips"))?;
+                .ok_or(Error::WrongType("ips"))?;
             Ok(NodeProto::Peers(Peers { ips }))
         }
         "solicit_entry2" => Ok(NodeProto::SolicitEntry2(SolicitEntry2)),
@@ -163,11 +115,11 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
             let list = map
                 .get(&Term::Atom(Atom::from("attestations_packed")))
                 .and_then(|t| t.list())
-                .ok_or(ParseError::Missing("attestations_packed"))?;
+                .ok_or(Error::Missing("attestations_packed"))?;
 
             let mut attestations = Vec::with_capacity(list.len());
             for item in list {
-                let bin = item.binary().ok_or(ParseError::WrongType("attestations_packed:binary"))?;
+                let bin = item.binary().ok_or(Error::WrongType("attestations_packed:binary"))?;
                 let att = parse_attestation_from_bin(bin)?;
                 attestations.push(att);
             }
@@ -176,24 +128,21 @@ pub fn parse_nodeproto(buf: &[u8]) -> Result<NodeProto, ParseError> {
         }
         _ => {
             println!("{:?}", &map);
-            Err(ParseError::WrongType("op"))
+            Err(Error::WrongType("op"))
         }
     }
 }
 
 /// Helper that reads an EntrySummary from an ETF term.
-fn parse_entry_summary(term: Option<&Term>) -> Result<EntrySummary, ParseError> {
+fn parse_entry_summary(term: Option<&Term>) -> Result<EntrySummary, Error> {
     let map = match term {
         Some(Term::Map(m)) => m.map.clone(), // borrow the vec
-        _ => return Err(ParseError::WrongType("EntrySummary")),
+        _ => return Err(Error::WrongType("EntrySummary")),
     };
 
-    let header =
-        map.get(&Term::Atom(Atom::from("header"))).and_then(|t| t.binary()).ok_or(ParseError::Missing("header"))?;
-    let signature = map
-        .get(&Term::Atom(Atom::from("signature")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("signature"))?;
+    let header = map.get(&Term::Atom(Atom::from("header"))).and_then(|t| t.binary()).ok_or(Error::Missing("header"))?;
+    let signature =
+        map.get(&Term::Atom(Atom::from("signature"))).and_then(|t| t.binary()).ok_or(Error::Missing("signature"))?;
 
     let mask = map.get(&Term::Atom(Atom::from("mask"))).and_then(|t| t.binary()).map(|b| b.to_vec());
 
@@ -202,11 +151,7 @@ fn parse_entry_summary(term: Option<&Term>) -> Result<EntrySummary, ParseError> 
 
 use crate::config::ENTRY_SIZE;
 use crate::consensus::entry::unpack_entry_and_validate;
-use crate::consensus::tx;
-use crate::consensus::tx::TxError;
 use eetf::{Binary, List};
-use num_traits::ToPrimitive;
-// already pulled by eetf
 
 /// Lightweight helpers so you can keep calling `.atom()`, `.integer()`, etc.
 pub trait TermExt {
@@ -256,16 +201,16 @@ pub fn get_map_field<'a>(map: &'a std::collections::HashMap<Term, Term>, key: &s
     map.get(&Term::Atom(Atom::from(key)))
 }
 
-pub fn to_string_required(t: &Term, field: &'static str) -> Result<String, TxError> {
-    t.string().ok_or(TxError::Missing(field))
+pub fn to_string_required(t: &Term, field: &'static str) -> Result<String, Error> {
+    t.string().ok_or(Error::Missing(field))
 }
 
-pub fn to_binary_required(t: &Term, field: &'static str) -> Result<Vec<u8>, TxError> {
-    t.binary().map(|b| b.to_vec()).ok_or(TxError::Missing(field))
+pub fn to_binary_required(t: &Term, field: &'static str) -> Result<Vec<u8>, Error> {
+    t.binary().map(|b| b.to_vec()).ok_or(Error::Missing(field))
 }
 
-pub fn to_list_required<'a>(t: &'a Term, field: &'static str) -> Result<&'a [Term], TxError> {
-    t.list().ok_or(TxError::Missing(field))
+pub fn to_list_required<'a>(t: &'a Term, field: &'static str) -> Result<&'a [Term], Error> {
+    t.list().ok_or(Error::Missing(field))
 }
 
 pub fn unpack_message_v2(buf: &[u8]) -> Result<MessageV2, String> {
@@ -377,44 +322,39 @@ pub fn encode_message_v2(m: &MessageV2) -> Result<Vec<u8>, EncodeError> {
     Ok(out)
 }
 
-fn parse_header_from_bin(bin: &[u8]) -> Result<EntryHeader, ParseError> {
+fn parse_header_from_bin(bin: &[u8]) -> Result<EntryHeader, Error> {
     let term = Term::decode(bin)?;
     let map = match term {
         Term::Map(m) => m.map,
-        _ => return Err(ParseError::WrongType("header map")),
+        _ => return Err(Error::WrongType("header map")),
     };
 
-    let slot = map.get(&Term::Atom(Atom::from("slot"))).and_then(|t| t.integer()).ok_or(ParseError::Missing("slot"))?;
+    let slot = map.get(&Term::Atom(Atom::from("slot"))).and_then(|t| t.integer()).ok_or(Error::Missing("slot"))?;
 
-    let dr = map.get(&Term::Atom(Atom::from("dr"))).and_then(|t| t.binary()).ok_or(ParseError::Missing("dr"))?.to_vec();
+    let dr = map.get(&Term::Atom(Atom::from("dr"))).and_then(|t| t.binary()).ok_or(Error::Missing("dr"))?.to_vec();
 
     let height =
-        map.get(&Term::Atom(Atom::from("height"))).and_then(|t| t.integer()).ok_or(ParseError::Missing("height"))?;
+        map.get(&Term::Atom(Atom::from("height"))).and_then(|t| t.integer()).ok_or(Error::Missing("height"))?;
 
     let prev_hash = map
         .get(&Term::Atom(Atom::from("prev_hash")))
         .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("prev_hash"))?
+        .ok_or(Error::Missing("prev_hash"))?
         .to_vec();
 
-    let prev_slot = map
-        .get(&Term::Atom(Atom::from("prev_slot")))
-        .and_then(|t| t.integer())
-        .ok_or(ParseError::Missing("prev_slot"))?;
+    let prev_slot =
+        map.get(&Term::Atom(Atom::from("prev_slot"))).and_then(|t| t.integer()).ok_or(Error::Missing("prev_slot"))?;
 
-    let signer = map
-        .get(&Term::Atom(Atom::from("signer")))
-        .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("signer"))?
-        .to_vec();
+    let signer =
+        map.get(&Term::Atom(Atom::from("signer"))).and_then(|t| t.binary()).ok_or(Error::Missing("signer"))?.to_vec();
 
     let txs_hash = map
         .get(&Term::Atom(Atom::from("txs_hash")))
         .and_then(|t| t.binary())
-        .ok_or(ParseError::Missing("txs_hash"))?
+        .ok_or(Error::Missing("txs_hash"))?
         .to_vec();
 
-    let vr = map.get(&Term::Atom(Atom::from("vr"))).and_then(|t| t.binary()).ok_or(ParseError::Missing("vr"))?.to_vec();
+    let vr = map.get(&Term::Atom(Atom::from("vr"))).and_then(|t| t.binary()).ok_or(Error::Missing("vr"))?.to_vec();
 
     Ok(EntryHeader { slot, dr, height, prev_hash, prev_slot, signer, txs_hash, vr })
 }
