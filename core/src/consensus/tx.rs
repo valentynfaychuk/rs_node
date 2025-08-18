@@ -1,9 +1,7 @@
 use crate::bls::{self, DST_TX};
-use crate::proto_enc::{
-    ParseError, TermExt, map_term_to_map, to_binary_required, to_list_required, to_string_required,
-};
-use blake3;
-use eetf::{Atom, Term};
+use crate::misc::blake3;
+use crate::misc::vanilla_ser::{self, Value};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct TxAction {
@@ -78,70 +76,83 @@ pub enum TxError {
     AttachedSymbolMustBeIncluded,
 }
 
-impl From<ParseError> for TxError {
-    fn from(err: ParseError) -> Self {
-        match err {
-            ParseError::Decode(_) => Self::Decode,
-            ParseError::Missing(f) => Self::Missing(f),
-            ParseError::WrongType(t) => Self::WrongType(t),
-            _ => Self::Decode,
-        }
-    }
-}
-
 pub fn unpack_etf(tx_packed: &[u8]) -> Result<TxU, TxError> {
-    // Outer: %{tx_encoded: bin, hash: bin, signature: bin}
-    let outer_term = Term::decode(tx_packed).map_err(|_| TxError::Decode)?;
-    let outer = map_term_to_map(&outer_term)?;
+    // Decode outer map via VanillaSer
+    let outer_val = vanilla_ser::decode_all(tx_packed).map_err(|_| TxError::Decode)?;
+    let outer = match &outer_val {
+        Value::Map(m) => m,
+        _ => return Err(TxError::WrongType("outer_map")),
+    };
+    // Helper to get a required bytes field
+    let get_bytes = |m: &BTreeMap<Value, Value>, key: &'static str| -> Result<Vec<u8>, TxError> {
+        match m.get(&Value::Bytes(key.as_bytes().to_vec())) {
+            Some(Value::Bytes(b)) => Ok(b.clone()),
+            Some(_) => Err(TxError::WrongType(key)),
+            None => Err(TxError::Missing(key)),
+        }
+    };
+    let tx_encoded = get_bytes(outer, "tx_encoded")?;
+    let hash = get_bytes(outer, "hash")?;
+    let signature = get_bytes(outer, "signature")?;
 
-    let tx_encoded = to_binary_required(
-        outer.get(&Term::Atom(Atom::from("tx_encoded"))).ok_or(TxError::Missing("tx_encoded"))?,
-        "tx_encoded",
-    )?;
-    let hash = to_binary_required(outer.get(&Term::Atom(Atom::from("hash"))).ok_or(TxError::Missing("hash"))?, "hash")?;
-    let signature = to_binary_required(
-        outer.get(&Term::Atom(Atom::from("signature"))).ok_or(TxError::Missing("signature"))?,
-        "signature",
-    )?;
+    // Decode inner tx map
+    let inner_val = vanilla_ser::decode_all(&tx_encoded).map_err(|_| TxError::Decode)?;
+    let inner = match &inner_val {
+        Value::Map(m) => m,
+        _ => return Err(TxError::WrongType("tx_map")),
+    };
 
-    // Inner tx: %{signer: pk, nonce: int, actions: [ ... ]}
-    let inner_term = Term::decode(&tx_encoded[..]).map_err(|_| TxError::Decode)?;
-    let inner = map_term_to_map(&inner_term)?;
+    let signer = get_bytes(inner, "signer")?;
+    let nonce = match inner.get(&Value::Bytes(b"nonce".to_vec())) {
+        Some(Value::Int(i)) => i64::try_from(*i).map_err(|_| TxError::NonceNotInteger)?,
+        Some(_) => return Err(TxError::NonceNotInteger),
+        None => return Err(TxError::Missing("nonce")),
+    };
 
-    let signer =
-        to_binary_required(inner.get(&Term::Atom(Atom::from("signer"))).ok_or(TxError::Missing("signer"))?, "signer")?;
-    let nonce_term = inner.get(&Term::Atom(Atom::from("nonce"))).ok_or(TxError::Missing("nonce"))?;
-    let nonce = nonce_term.integer().ok_or(TxError::NonceNotInteger)?;
+    let actions_val = match inner.get(&Value::Bytes(b"actions".to_vec())) {
+        Some(v) => v,
+        None => return Err(TxError::Missing("actions")),
+    };
+    let actions_list = match actions_val {
+        Value::List(list) => list,
+        _ => return Err(TxError::ActionsNotList),
+    };
 
-    let actions_term = inner.get(&Term::Atom(Atom::from("actions"))).ok_or(TxError::Missing("actions"))?;
-    let actions_list = to_list_required(actions_term, "actions")?;
+    let mut actions: Vec<TxAction> = Vec::with_capacity(actions_list.len());
+    for a_val in actions_list {
+        let amap = match a_val {
+            Value::Map(m) => m,
+            _ => return Err(TxError::WrongType("action_map")),
+        };
+        let op_bytes = get_bytes(amap, "op")?;
+        let op = String::from_utf8(op_bytes).map_err(|_| TxError::WrongType("op_string"))?;
+        let contract = get_bytes(amap, "contract")?;
+        let function_bytes = get_bytes(amap, "function")?;
+        let function = String::from_utf8(function_bytes).map_err(|_| TxError::WrongType("function_string"))?;
 
-    let mut actions = Vec::with_capacity(actions_list.len());
-    for a in actions_list {
-        let m = map_term_to_map(a)?;
-
-        let op = to_string_required(m.get(&Term::Atom(Atom::from("op"))).ok_or(TxError::Missing("op"))?, "op")?;
-        let contract = to_binary_required(
-            m.get(&Term::Atom(Atom::from("contract"))).ok_or(TxError::Missing("contract"))?,
-            "contract",
-        )?;
-        let function = to_string_required(
-            m.get(&Term::Atom(Atom::from("function"))).ok_or(TxError::Missing("function"))?,
-            "function",
-        )?;
-
-        let args_t = m.get(&Term::Atom(Atom::from("args"))).ok_or(TxError::Missing("args"))?;
-        let args_list = to_list_required(args_t, "args")?;
-        let mut args = Vec::with_capacity(args_list.len());
-        for t in args_list {
-            let b = t.binary().ok_or(TxError::ArgMustBeBinary)?;
-            args.push(b.to_vec());
+        let args_v = amap.get(&Value::Bytes(b"args".to_vec())).ok_or(TxError::Missing("args"))?;
+        let args_l = match args_v {
+            Value::List(l) => l,
+            _ => return Err(TxError::ArgsMustBeList),
+        };
+        let mut args: Vec<Vec<u8>> = Vec::with_capacity(args_l.len());
+        for t in args_l {
+            match t {
+                Value::Bytes(b) => args.push(b.clone()),
+                _ => return Err(TxError::ArgMustBeBinary),
+            }
         }
 
-        let attached_symbol =
-            m.get(&Term::Atom(Atom::from("attached_symbol"))).and_then(|t| t.binary()).map(|b| b.to_vec());
-        let attached_amount =
-            m.get(&Term::Atom(Atom::from("attached_amount"))).and_then(|t| t.binary()).map(|b| b.to_vec());
+        let attached_symbol = match amap.get(&Value::Bytes(b"attached_symbol".to_vec())) {
+            Some(Value::Bytes(b)) => Some(b.clone()),
+            Some(_) => return Err(TxError::AttachedSymbolMustBeBinary),
+            None => None,
+        };
+        let attached_amount = match amap.get(&Value::Bytes(b"attached_amount".to_vec())) {
+            Some(Value::Bytes(b)) => Some(b.clone()),
+            Some(_) => return Err(TxError::AttachedAmountMustBeBinary),
+            None => None,
+        };
 
         actions.push(TxAction { op, contract, function, args, attached_symbol, attached_amount });
     }
@@ -214,14 +225,16 @@ pub fn known_receivers(txu: &TxU) -> Vec<Vec<u8>> {
 pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, TxError> {
     let txu = unpack_etf(tx_packed)?;
 
+    println!("{:#?}", txu);
+
     // Compute canonical hash of tx_encoded
     let h = blake3::hash(&txu.tx_encoded);
-    if txu.hash.as_slice() != h.as_bytes() {
+    if txu.hash.as_slice() != h.as_ref() {
         return Err(TxError::InvalidHash);
     }
 
     // Verify signature over hash with DST_TX
-    bls::verify(&txu.tx.signer, &txu.signature, h.as_bytes(), DST_TX).map_err(|_| TxError::InvalidSignature)?;
+    bls::verify(&txu.tx.signer, &txu.signature, &h, DST_TX).map_err(|_| TxError::InvalidSignature)?;
 
     // Nonce checks (Elixir allowed up to 99..(20 digits); here we skip as nonce is i64 already)
 
@@ -287,7 +300,6 @@ pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Resul
     Ok(txu)
 }
 
-// --- Cross-dependency API alignment with Elixir TX module ---
 /// Validate wrapper mirroring Elixir TX.validate/2, delegating to validate_basic.
 pub fn validate(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, TxError> {
     validate_basic(tx_packed, is_special_meeting_block)

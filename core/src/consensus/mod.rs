@@ -1,4 +1,4 @@
-mod entry;
+pub mod entry;
 pub mod kv;
 pub mod tx;
 

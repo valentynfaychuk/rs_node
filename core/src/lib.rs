@@ -2,6 +2,7 @@
 
 mod bic;
 pub mod bls;
+pub mod config;
 pub mod consensus;
 pub mod genesis;
 pub mod misc;

@@ -1,4 +1,5 @@
 use crate::bic::sol::SolParsed;
+use crate::consensus::entry::ParsedEntry;
 use crate::consensus::tx;
 use crate::proto_enc::ParseError;
 use eetf::convert::TryAsRef;
@@ -338,9 +339,6 @@ impl NodeProto {
             }
             NodeProto::Entry(e) => {
                 // TODO: deduplicate via DB/Fabric and insert; process optional consensus/attestation when parser supports.
-                if let Err(e) = e.validate() {
-                    return HandleResult::Error(format!("entry: {:?}", e));
-                }
                 HandleResult::ReceivedEntry { entry: e.clone() }
             }
             NodeProto::AttestationBulk(b) => {

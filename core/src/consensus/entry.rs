@@ -3,13 +3,14 @@ use crate::consensus::tx;
 use crate::misc::blake3;
 use crate::proto::{Entry, EntryHeader};
 use crate::proto_enc::{ParseError, get_map_field};
+use eetf::DecodeError;
 use eetf::convert::TryAsRef;
 use eetf::{Atom, Binary, List, Term};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EntryError {
     #[error("etf decode error")]
-    Decode,
+    Decode(DecodeError),
     #[error("wrong term type: {0}")]
     WrongType(&'static str),
     #[error("missing field: {0}")]
@@ -26,13 +27,13 @@ pub enum EntryError {
     TxError(&'static str),
 }
 
-impl From<ParseError> for EntryError {
-    fn from(err: ParseError) -> Self {
-        match err {
-            ParseError::Decode(_) => Self::Decode,
-            ParseError::Missing(f) => Self::Missing(f),
-            ParseError::WrongType(t) => Self::WrongType(t),
-            _ => Self::Decode,
+impl Into<ParseError> for EntryError {
+    fn into(self) -> ParseError {
+        match self {
+            Self::Decode(d) => ParseError::Decode(d),
+            Self::Missing(f) => ParseError::Missing(f),
+            Self::WrongType(t) => ParseError::WrongType(t),
+            _ => ParseError::WrongType("entry"), // TODO implement the rest
         }
     }
 }
@@ -63,7 +64,7 @@ impl TermExt for Term {
 }
 
 fn parse_header_from_bin(bin: &[u8]) -> Result<EntryHeader, EntryError> {
-    let term = Term::decode(bin).map_err(|_| EntryError::Decode)?;
+    let term = Term::decode(bin).map_err(|e| EntryError::Decode(e))?;
     let map = match term {
         Term::Map(m) => m.map,
         _ => return Err(EntryError::WrongType("header map")),
@@ -84,14 +85,15 @@ fn parse_header_from_bin(bin: &[u8]) -> Result<EntryHeader, EntryError> {
     Ok(EntryHeader { slot, dr, height, prev_hash, prev_slot, signer, txs_hash, vr })
 }
 
+#[derive(Debug, Clone)]
 pub struct ParsedEntry {
     pub entry: Entry,
     pub header_bin: Vec<u8>,
     pub mask: Option<Vec<u8>>, // bitstring as raw bytes if present
 }
 
-fn parse_entry_from_bin(bin: &[u8]) -> Result<ParsedEntry, EntryError> {
-    let t = Term::decode(bin).map_err(|_| EntryError::Decode)?;
+pub fn parse_entry_from_bin(bin: &[u8]) -> Result<ParsedEntry, EntryError> {
+    let t = Term::decode(bin).map_err(|e| EntryError::Decode(e))?;
     let m = match t {
         Term::Map(m) => m.map,
         _ => return Err(EntryError::WrongType("entry")),
@@ -182,6 +184,8 @@ fn validate_entry_contents(e: &Entry, is_special_meeting_block: bool) -> Result<
         return Err(EntryError::TxsHashInvalid);
     }
 
+    //return Ok(());
+
     // Validate each tx
     for txp in &e.txs {
         match tx::validate(txp, is_special_meeting_block) {
@@ -220,9 +224,7 @@ fn validate_entry_contents(e: &Entry, is_special_meeting_block: bool) -> Result<
     Ok(())
 }
 
-/// Translate of Entry.unpack_and_validate/1 minimal variant.
-/// - `entry_size_limit` corresponds to Application.fetch_env!(:ama, :entry_size)
-pub fn unpack_and_validate(entry_packed: &[u8], entry_size_limit: usize) -> Result<Entry, EntryError> {
+pub fn unpack_entry_and_validate(entry_packed: &[u8], entry_size_limit: usize) -> Result<Entry, EntryError> {
     if entry_packed.len() >= entry_size_limit {
         return Err(EntryError::TooLarge);
     }
