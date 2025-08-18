@@ -1,4 +1,4 @@
-pub fn init_logging() {
+pub fn init_tracing() {
     // Minimal, dependency-light logging initialization.
     // Prefer not to fail if a subscriber is already set elsewhere.
     let _ = tracing_subscriber::fmt::try_init();

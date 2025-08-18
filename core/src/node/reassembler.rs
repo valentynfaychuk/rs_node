@@ -6,9 +6,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 // does not poison mutex on panic
 
-use super::proto::{MessageV2, NodeProto};
-use super::proto_ser::parse_nodeproto;
+use super::etf_ser;
+use super::etf_ser::Proto;
+use super::msg_v2::MessageV2;
 use crate::misc::bls12_381;
+use crate::misc::reed_solomon;
 use crate::misc::reed_solomon::ReedSolomonResource;
 
 pub struct ReedSolomonReassembler {
@@ -18,9 +20,9 @@ pub struct ReedSolomonReassembler {
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    ReedSolomon(#[from] crate::misc::reed_solomon::Error),
+    ReedSolomon(#[from] reed_solomon::Error),
     #[error(transparent)]
-    ParseError(#[from] super::proto_ser::Error),
+    Serializer(#[from] etf_ser::Error),
     #[error(transparent)]
     Bls(#[from] bls12_381::Error),
     #[error("message has no signature")]
@@ -35,8 +37,8 @@ struct ReassemblyKey {
 }
 
 impl From<&MessageV2> for ReassemblyKey {
-    fn from(msg: &MessageV2) -> Self {
-        Self { pk: msg.pk.clone(), ts_nano: msg.ts_nano, shard_total: msg.shard_total }
+    fn from(&MessageV2 { ref pk, ts_nano, shard_total, .. }: &MessageV2) -> Self {
+        Self { pk: pk.clone(), ts_nano, shard_total }
     }
 }
 
@@ -88,13 +90,14 @@ impl ReedSolomonReassembler {
 
     // Adds a shard to the reassembly buffer
     // When enough shards collected, reconstructs
-    pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<NodeProto>, Error> {
+    pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Proto>, Error> {
         let key = ReassemblyKey::from(message);
         let shard = &message.payload;
 
         // Some messages are single-shard only, so we can skip the reorg logic
         if key.shard_total == 1 {
-            return Self::verify_msg_sig(&key, &message.signature, &shard);
+            Self::verify_msg_sig(&key, &message.signature, message.payload.as_slice())?;
+            return Ok(Some(Proto::try_from(message.payload.as_slice())?));
         }
 
         let data_shards = (key.shard_total / 2) as usize;
@@ -132,13 +135,14 @@ impl ReedSolomonReassembler {
                 let mut rs_res = ReedSolomonResource::new(data_shards, parity_shards)?;
                 let payload = rs_res.decode_shards(shards, data_shards + parity_shards, msg_size)?;
 
-                return Self::verify_msg_sig(&key, &message.signature, &payload);
+                Self::verify_msg_sig(&key, &message.signature, payload.as_slice())?;
+                return Ok(Some(Proto::try_from(payload.as_slice())?));
             }
         }
         Ok(None)
     }
 
-    fn verify_msg_sig(key: &ReassemblyKey, signature: &[u8], payload: &[u8]) -> Result<Option<NodeProto>, Error> {
+    fn verify_msg_sig(key: &ReassemblyKey, signature: &[u8], payload: &[u8]) -> Result<(), Error> {
         use crate::misc::blake3 as b3; // use more efficient blake3
 
         if signature.is_empty() {
@@ -151,8 +155,7 @@ impl ReedSolomonReassembler {
         let msg_hash = hasher.finalize();
 
         bls12_381::verify(&key.pk, signature, &msg_hash, DST_NODE)?;
-        let parsed = parse_nodeproto(payload)?;
 
-        Ok(Some(parsed))
+        Ok(())
     }
 }

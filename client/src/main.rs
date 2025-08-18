@@ -4,14 +4,20 @@ use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 use core::node::ReedSolomonReassembler;
-use core::node::proto::{HandleResult, NodeProto};
-use core::node::proto_ser::unpack_message_v2;
+use core::node::etf_ser::Proto;
+use core::node::handler::HandleResult;
+use core::node::msg_v2::MessageV2;
 use core::test_data::ping::PING;
 
 use plot::{serve, state::AppState};
 
+mod tracing;
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    // Initialize tracing subscriber for logging.
+    tracing::init_tracing();
+
     // Target UDP address of an Amadeus node.
     let addr: SocketAddr =
         std::env::var("UDP_ADDR").unwrap_or_else(|_| "127.0.0.1:36969".to_string()).parse().expect("valid UDP_ADDR");
@@ -61,80 +67,54 @@ async fn recv_loop(
             Err(_) => continue,
             Ok(Err(e)) => return Err(e),
             Ok(Ok((len, src))) => {
-                let data = &buf[..len];
-
-                if let Ok(m) = unpack_message_v2(data) {
-                    match reassembler.add_shard(&m).await {
-                        Ok(Some(msg)) => {
-                            // final shard received - reassembler assembled the message
-                            // record the peer as seen on ANY successfully parsed message
-                            let last_msg = variant_tag(&msg).to_string();
-                            // kind is unknown here; pass None unless you can infer it
-                            let pk_str = bs58::encode(&m.pk).into_string();
-                            app_state.seen_peer(src, Some(pk_str), Some(last_msg)).await;
-
-                            match msg.handle() {
-                                HandleResult::ReplyPong { .. } => {
-                                    //println!("reply pong: {}", ts_m);
-                                }
-                                HandleResult::ObservedPong { .. } => {
-                                    //println!("observed pong: {} {}", ts_m, seen_time_ms);
-                                }
-                                HandleResult::ReceivedEntry { entry } => {
-                                    println!("{:#?}", entry);
-                                }
-                                HandleResult::ReceivedSol { .. } => {
-                                    //println!("{:?}", sol);
-                                }
-                                HandleResult::Attestations { .. } => {
-                                    //println!("received attestation bulk: {:?}", attestations);
-                                }
-                                HandleResult::Error(e) => {
-                                    println!("err: {}", e);
-                                }
-                                HandleResult::Noop => {
-                                    // do nothing
-                                }
-                                hr => {
-                                    println!("handle result {:?}", hr);
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            // the are not enough shards to assemble the message yet
-                            // do nothing
-                        }
-                        Err(e) => {
-                            println!("err packet, shard: {} {}, {}", &m.shard_index, &m.shard_total, e);
-                            // parse error; do nothing (only add peers when msg is OK)
-                        }
+                match handle(&reassembler, &app_state, src, &buf[..len]).await {
+                    Some(HandleResult::Noop) => {}
+                    Some(HandleResult::ReplyPong { .. }) => {
+                        //println!("reply pong: {}", ts_m);
                     }
+                    Some(HandleResult::ObservedPong { .. }) => {
+                        //println!("observed pong: {} {}", ts_m, seen_time_ms);
+                    }
+                    Some(HandleResult::ReceivedEntry { entry }) => {
+                        //println!("{:#?}", entry);
+                    }
+                    Some(HandleResult::Attestations { .. }) => {
+                        //println!("received attestation bulk: {:?}", attestations);
+                    }
+                    Some(HandleResult::Error(e)) => {
+                        println!("err: {}", e);
+                    }
+                    Some(hr) => {
+                        //println!("handle result {:?}", hr);
+                    }
+                    _ => {}
                 }
             }
         }
     }
 }
 
-/// Small helper: a stable human-readable tag for the enum variant.
-fn variant_tag(m: &NodeProto) -> &'static str {
-    use NodeProto::*;
-    match m {
-        Ping(_) => "Ping",
-        Pong(_) => "Pong",
-        WhoAreYou(_) => "WhoAreYou",
-        TxPool(_) => "TxPool",
-        Peers(_) => "Peers",
-        Sol(_) => "Sol",
-        Entry(_) => "Entry",
-        AttestationBulk(_) => "AttestationBulk",
-        ConsensusBulk(_) => "ConsensusBulk",
-        CatchupEntry(_) => "CatchupEntry",
-        CatchupTri(_) => "CatchupTri",
-        CatchupBi(_) => "CatchupBi",
-        CatchupAttestation(_) => "CatchupAttestation",
-        SpecialBusiness(_) => "SpecialBusiness",
-        SpecialBusinessReply(_) => "SpecialBusinessReply",
-        SolicitEntry(_) => "SolicitEntry",
-        SolicitEntry2(_) => "SolicitEntry2",
+async fn handle(
+    reassembler: &ReedSolomonReassembler,
+    app_state: &AppState,
+    src: SocketAddr,
+    bin: &[u8],
+) -> Option<HandleResult> {
+    if let Ok(msg) = MessageV2::try_from(bin) {
+        match reassembler.add_shard(&msg).await {
+            Ok(Some(proto)) => {
+                // final shard received - reassembler assembled the message
+                // record the peer as seen on ANY successfully parsed message
+                let pk_str = bs58::encode(&msg.pk).into_string();
+                app_state.seen_peer(src, Some(pk_str), Some(proto.get_name().into())).await;
+
+                //println!("{:#?}", proto);
+
+                return Some(HandleResult::from(proto));
+            }
+            Err(e) => println!("error adding shard: {}", e),
+            _ => {}
+        }
     }
+    None
 }

@@ -434,6 +434,7 @@ dependencies = [
  "plot",
  "ratatui",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -479,7 +480,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
- "tracing-subscriber",
+ "tracing",
 ]
 
 [[package]]

@@ -109,6 +109,7 @@ pub fn sign(seed: &[u8], message: &[u8], dst: &[u8]) -> Result<Vec<u8>, Error> {
 }
 
 /// Verify a signature using a compressed G1 public key (48 bytes) and signature (96 bytes).
+/// Errors out if the signature is invalid
 pub fn verify(pk_bytes: &[u8], sig_bytes: &[u8], msg: &[u8], dst: &[u8]) -> Result<(), Error> {
     let pk = BlsPublicKey::deserialize(pk_bytes).map_err(|_| Error::InvalidPoint)?;
     let sig = BlsSignature::deserialize(sig_bytes).map_err(|_| Error::InvalidSignature)?;

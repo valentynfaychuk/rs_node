@@ -4,6 +4,7 @@ use crate::misc::bls12_381;
 
 use crate::bic::coin;
 use crate::bic::sol;
+use crate::bic::sol::Solution;
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 pub enum EpochError {
@@ -115,11 +116,11 @@ impl Epoch {
         // TODO: for each segment: kv_set_bit("bic:epoch:solbloom:{page}", bit_offset)
 
         // Unpack and verify epoch
-        let parsed = sol::unpack(sol_bytes).map_err(|_| EpochError::InvalidSol)?;
+        let parsed = Solution::unpack(sol_bytes).map_err(|_| EpochError::InvalidSol)?;
         let (epoch, pk, pop) = match parsed {
-            sol::SolParsed::V2(v2) => (v2.epoch as u64, v2.pk, v2.pop),
-            sol::SolParsed::V1(v1) => (v1.epoch as u64, v1.pk, v1.pop),
-            sol::SolParsed::V0(v0) => (v0.epoch as u64, v0.pk, v0.pop),
+            sol::Solution::V2(v2) => (v2.epoch as u64, v2.pk, v2.pop),
+            sol::Solution::V1(v1) => (v1.epoch as u64, v1.pk, v1.pop),
+            sol::Solution::V0(v0) => (v0.epoch as u64, v0.pk, v0.pop),
         };
         if epoch != env.entry_epoch {
             return Err(EpochError::InvalidEpoch);
