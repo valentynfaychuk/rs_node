@@ -29,45 +29,51 @@ Before pushing changes, run `cargo fmt` to format the code.
 UDP_ADDR=127.0.0.1:36969 cargo run --package client
 ```
 
-### Simulating network traffic
+## Running a PCAP simulation
 
-### PCAP path
-
-Step 1. Record traffic to a pcap on a real amadeus node (port 36969)
+### Step 1. Record traffic to a pcap on a real amadeus node (port 36969)
 
 ```bash
 tcpdump -i any udp dst port 36969 -w pcaps/test.pcap -c 10000
 ```
 
-Step 2. Rewrite the pcap to match your LAN (as if packets came to your laptop)
+### Step 2. Rewrite the pcap to match your LAN (as if packets came to your laptop)
 
 ```bash
 ./pcaps/rewrite-pcap.sh pcaps/test.pcap en0
 # it must create pcaps/test.local.pcap
 ```
 
-Step 3. Replay the rewritten pcap on your laptop (needs sudo because working with kernel stack)
+### Step 3. Replay the rewritten pcap on your laptop (needs sudo because working with kernel stack)
 
 ```bash
-sudo tcpdump -i en0 -n -vv udp dst port 36969
+# The packets are often getting lost because they overflow the kernel buffers
+# So it is suggested to increase the kernel buffers before replaying
+sudo sysctl -w kern.ipc.maxsockbuf=8388608        # raises per-socket max
+sudo sysctl -w net.inet.udp.recvspace=2097152     # default UDP recv buffer (per-socket)
+sysctl kern.ipc.maxsockbuf net.inet.udp.recvspace # check the values
+
+# Running the replay
+sudo tcpdump -i en0 -n -vv udp dst port 36969     # to check if they are flowing
 sudo tcpreplay -i en0 --pps 100 pcaps/test.local.pcap
 ```
 
-### Expected results
+### Expected output
 
 Core library has a built-in metrics system (light client prints them after 10s of being idle)
 Expected output of the metrics after replaying the `pcaps/test.local.pcap` file:
 
 ```bash
+# HELP amadeus_protocol_messages_total Total number of protocol messages handled by type
 # TYPE amadeus_protocol_messages_total counter
-amadeus_protocol_messages_total{type="ping"} 8411
+amadeus_protocol_messages_total{type="ping"} 8657
 amadeus_protocol_messages_total{type="pong"} 0
 amadeus_protocol_messages_total{type="who_are_you"} 0
 amadeus_protocol_messages_total{type="txpool"} 0
 amadeus_protocol_messages_total{type="peers"} 0
 amadeus_protocol_messages_total{type="sol"} 0
 amadeus_protocol_messages_total{type="entry"} 35
-amadeus_protocol_messages_total{type="attestation_bulk"} 1153
+amadeus_protocol_messages_total{type="attestation_bulk"} 1165
 amadeus_protocol_messages_total{type="consensus_bulk"} 0
 amadeus_protocol_messages_total{type="catchup_entry"} 0
 amadeus_protocol_messages_total{type="catchup_tri"} 0
@@ -80,7 +86,7 @@ amadeus_protocol_messages_total{type="solicit_entry2"} 0
 
 # HELP amadeus_packets_total Total number of UDP packets received
 # TYPE amadeus_packets_total counter
-amadeus_udp_packets_total 9735
+amadeus_udp_packets_total 10001
 
 # HELP amadeus_packet_errors_total Total number of packet processing errors by type
 # TYPE amadeus_packet_errors_total counter

@@ -12,11 +12,11 @@ pub const DST_NODE: &[u8] = b"AMADEUS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NODE_";
 
 /// Aggregate signature with a bitmask of trainers who have signed.
 /// - `mask[i] == true` means trainer at index `i` has contributed their signature.
-/// - `aggsig` is the aggregated signature (compressed G2, 96 bytes in min_pk scheme).
+/// - `agg_sig` is the aggregated signature (compressed G2, 96 bytes in min_pk scheme).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggSig {
     pub mask: Vec<bool>,
-    pub aggsig: [u8; 96],
+    pub agg_sig: [u8; 96],
 }
 
 impl AggSig {
@@ -32,9 +32,9 @@ impl AggSig {
         let index = index_of(trainers, pk).ok_or(Error::InvalidPoint)?;
 
         mask[index] = true;
-        let aggsig = copy_sig(signature)?;
+        let agg_sig = copy_sig(signature)?;
 
-        Ok(Self { mask, aggsig })
+        Ok(Self { mask, agg_sig })
     }
 
     /// Add another signer's signature if not already present in the mask.
@@ -50,8 +50,8 @@ impl AggSig {
         }
         self.mask[index] = true;
 
-        let agg = aggregate_signatures([self.aggsig.as_slice(), signature])?;
-        self.aggsig = agg;
+        let agg = aggregate_signatures([self.agg_sig.as_slice(), signature])?;
+        self.agg_sig = agg;
         Ok(())
     }
 

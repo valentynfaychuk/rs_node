@@ -305,8 +305,8 @@ mod tests {
         inc_v2udp_packets();
 
         let metrics_str = get_metrics();
-        assert!(metrics_str.contains("amadeus_packet_errors_total{type=\"parse_error\"}"));
-        assert!(metrics_str.contains("amadeus_packet_errors_total{type=\"shard_error\"}"));
-        assert!(metrics_str.contains("amadeus_packets_total"));
+        assert!(metrics_str.contains("amadeus_packet_errors_total{type=\"v2_parsing\"}"));
+        assert!(metrics_str.contains("amadeus_packet_errors_total{type=\"reassembly\"}"));
+        assert!(metrics_str.contains("amadeus_udp_packets_total"));
     }
 }

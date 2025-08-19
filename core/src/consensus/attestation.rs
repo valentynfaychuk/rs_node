@@ -81,7 +81,7 @@ impl HandleExt for AttestationBulk {
 }
 
 impl Attestation {
-    fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
+    pub fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
         let term = Term::decode(bin)?;
         let map = match term {
             Term::Map(m) => m.map,

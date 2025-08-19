@@ -10,6 +10,9 @@ use crate::node::proto::ProtoExt;
 use eetf::Term;
 use std::collections::HashMap;
 use std::fmt;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
 
 const MAX_TXS: usize = 100; // Maximum number of transactions in an entry
 
@@ -33,6 +36,8 @@ pub enum Error {
     TxError(#[from] super::tx::Error),
     #[error(transparent)]
     Bls(#[from] bls12_381::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Clone)]
@@ -137,8 +142,35 @@ impl HandleExt for Entry {
     type Error = Error;
 
     fn handle(self) -> Result<Instruction, Self::Error> {
-        // TODO: handle entry, e.g. store in database, update state, etc.
-        Ok(Instruction::Noop)
+        // Create log directory if it doesn't exist
+        let log_dir = Path::new("log");
+        if !log_dir.exists() {
+            fs::create_dir_all(log_dir)?;
+        }
+
+        // Write entry to the log file
+        // TODO: figure out the tip and block type (root finalized or chain top)
+        let log_file = log_dir.join("entry-tip");
+        let mut file = fs::OpenOptions::new().create(true).append(true).open(log_file)?;
+
+        // Format entry data for logging
+        let entry_log = format!(
+            "Height: {}, Hash: {}, Slot: {}, Signer: {}, Txs: {}\n",
+            self.header.height,
+            bs58::encode(&self.hash).into_string(),
+            self.header.slot,
+            bs58::encode(&self.header.signer).into_string(),
+            self.txs.len()
+        );
+
+        file.write_all(entry_log.as_bytes())?;
+        file.flush()?;
+
+        println!("Entry logged - Height: {}, Hash: {}", self.header.height, bs58::encode(&self.hash).into_string());
+
+        // Clone the entry for the instruction since we've already used self for logging
+        let entry_clone = self.clone();
+        Ok(Instruction::ReceivedEntry { entry: entry_clone })
     }
 }
 
