@@ -40,7 +40,6 @@ impl HandleExt for Ping {
     type Error = Error;
 
     fn handle(self) -> Result<Instruction, Self::Error> {
-        println!("{:#?}", self);
         Ok(Instruction::ReplyPong { ts_m: self.ts_m })
     }
 }

@@ -64,7 +64,7 @@ impl fmt::Debug for EntryHeader {
 
 impl EntryHeader {
     fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
-        let term = Term::decode(bin).map_err(|e| Error::Decode(e))?;
+        let term = Term::decode(bin).map_err(Error::Decode)?;
         let map = match term {
             Term::Map(m) => m.map,
             _ => return Err(Error::WrongType("header map")),
@@ -182,9 +182,9 @@ impl Entry {
             return Err(Error::WrongType("txs_len_over_100"));
         }
 
-        let txs_bin = self.txs.iter().cloned().flatten().collect::<Vec<u8>>();
+        let txs_bin = self.txs.iter().flatten().cloned().collect::<Vec<u8>>();
         let h = blake3::hash(&txs_bin);
-        if self.header.txs_hash.as_slice() != &h {
+        if self.header.txs_hash.as_slice() != h.as_slice() {
             return Err(Error::TxsHashInvalid);
         }
 
@@ -242,7 +242,7 @@ struct ParsedEntry {
 
 impl ParsedEntry {
     fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
-        let term = Term::decode(bin).map_err(|e| Error::Decode(e))?;
+        let term = Term::decode(bin).map_err(Error::Decode)?;
         let map = term.get_map().ok_or(Error::WrongType("entry"))?;
 
         let hash = get_map_field(&map, "hash").and_then(|t| t.get_binary()).ok_or(Error::Missing("hash"))?.to_vec();

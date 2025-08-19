@@ -15,7 +15,7 @@ impl Hasher {
     }
     #[cfg(feature = "rayon")]
     pub fn update_rayon(&mut self, buf: &[u8]) {
-        self.0.update_rayon(buf)
+        self.0.update_rayon(buf);
     }
     #[cfg(not(feature = "rayon"))]
     pub fn update_rayon(&mut self, _buf: &[u8]) {
@@ -173,7 +173,7 @@ pub fn freivalds_inner(
     B: &[[i8; 16]; 50_240],
     C: &[[i32; 16]; 16],
 ) -> bool {
-    #[cfg(all(target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         if std::is_x86_feature_detected!("avx2") {
             unsafe {

@@ -75,7 +75,7 @@ impl AggSig {
 
     /// Compute a score using a provided weight function over signed trainers.
     /// The result mirrors the Elixir behavior: sum(weights_of_signed) / trainers.len()
-    pub fn score_by<TPk, F>(&self, trainers: &[TPk], mut weight_fn: F) -> f64
+    pub fn score_by<TPk, F>(&self, trainers: &[TPk], weight_fn: F) -> f64
     where
         TPk: AsRef<[u8]>,
         F: FnMut(&[u8]) -> f64,
@@ -89,7 +89,7 @@ impl AggSig {
             .iter()
             .zip(trainers.iter())
             .filter_map(|(&bit, pk)| if bit { Some(pk.as_ref()) } else { None })
-            .map(|pk_bytes| weight_fn(pk_bytes))
+            .map(weight_fn)
             .sum();
         sum / (total as f64)
     }

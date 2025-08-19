@@ -63,8 +63,12 @@ async fn recv_loop(
     let mut buf = vec![0u8; 65_535];
 
     loop {
-        match timeout(Duration::from_secs(5), socket.recv_from(&mut buf)).await {
-            Err(_) => continue,
+        match timeout(Duration::from_secs(10), socket.recv_from(&mut buf)).await {
+            Err(_) => {
+                // If no packets for a while, print metrics
+                println!("{}", core::metrics::get_metrics());
+                continue;
+            }
             Ok(Err(e)) => return Err(e),
             Ok(Ok((len, src))) => {
                 match handle(&reassembler, &app_state, src, &buf[..len]).await {
@@ -97,18 +101,36 @@ async fn handle(
     src: SocketAddr,
     bin: &[u8],
 ) -> Option<Instruction> {
-    if let Ok(msg) = MessageV2::try_from(bin) {
-        // record the peer as seen on ANY successfully parsed message
-        let pk_str = bs58::encode(&msg.pk).into_string();
-        match reassembler.add_shard(&msg).await {
-            Ok(Some(payload)) => {
-                // final shard received - reassembler assembled the message
-                let proto = Proto::from_etf_validated(&payload).map_err(|e| println!("Can't parse proto: {e}")).ok()?;
-                app_state.seen_peer(src, Some(pk_str), Some(proto.get_name().into())).await;
-                return proto.handle().map_err(|e| println!("Error handling proto: {e}")).ok();
+    match MessageV2::try_from(bin) {
+        Ok(msg) => {
+            // record the peer as seen on ANY successfully parsed message
+            let pk_str = bs58::encode(&msg.pk).into_string();
+            match reassembler.add_shard(&msg).await {
+                Ok(Some(payload)) => {
+                    // final shard received - reassembler assembled the message
+                    match Proto::from_etf_validated(&payload) {
+                        Ok(proto) => {
+                            app_state.seen_peer(src, Some(pk_str), Some(proto.get_name().into())).await;
+                            match proto.handle() {
+                                Ok(instruction) => return Some(instruction),
+                                Err(e) => {
+                                    println!("failed to handle proto: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("invalid proto: {}", e);
+                        }
+                    }
+                }
+                Ok(None) => {} // Still waiting for more shards, not an error
+                Err(e) => {
+                    println!("failed to reassemble: {}", e);
+                }
             }
-            Err(e) => println!("error adding shard: {}", e),
-            _ => {}
+        }
+        Err(e) => {
+            println!("not a v2 packet: {}", e);
         }
     }
     None

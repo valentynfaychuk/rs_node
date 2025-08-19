@@ -84,9 +84,16 @@ impl ReedSolomonReassembler {
         println!("cleared {}", size_before - reorg.len());
     }
 
+    pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
+        self.add_shard_inner(message).await.map_err(|e| {
+            crate::metrics::inc_reassembly_errors();
+            e
+        })
+    }
+
     // Adds a shard to the reassembly buffer
     // When enough shards collected, reconstructs
-    pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
+    pub async fn add_shard_inner(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
         let key = ReassemblyKey::from(message);
         let shard = &message.payload;
 

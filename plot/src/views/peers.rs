@@ -66,17 +66,15 @@ pub fn rows(peers: &HashMap<SocketAddr, PeerInfo>) -> String {
             "<tr>\
                <td>{}</td>\
                <td>{}</td>\
-               <td><span class=\"pill\">{}</span></td>\
+               <td><span class=\"pill\"></span></td>\
                <td>{}</td>\
                <td>{}</td>\
-               <td><span class=\"muted\">{}</span></td>\
+               <td><span class=\"muted\"></span></td>\
              </tr>",
             esc_opt(&p.sk),
             esc(&p.addr.to_string()),
-            "",
             esc_opt(&p.last_msg),
             p.last_seen_ms,
-            "", //esc_opt(&p.sk),
         );
     }
     s

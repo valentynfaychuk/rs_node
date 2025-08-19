@@ -53,6 +53,44 @@ sudo tcpdump -i en0 -n -vv udp dst port 36969
 sudo tcpreplay -i en0 --pps 100 pcaps/test.local.pcap
 ```
 
+### Expected results
+
+Core library has a built-in metrics system (light client prints them after 10s of being idle)
+Expected output of the metrics after replaying the `pcaps/test.local.pcap` file:
+
+```bash
+# TYPE amadeus_protocol_messages_total counter
+amadeus_protocol_messages_total{type="ping"} 8411
+amadeus_protocol_messages_total{type="pong"} 0
+amadeus_protocol_messages_total{type="who_are_you"} 0
+amadeus_protocol_messages_total{type="txpool"} 0
+amadeus_protocol_messages_total{type="peers"} 0
+amadeus_protocol_messages_total{type="sol"} 0
+amadeus_protocol_messages_total{type="entry"} 35
+amadeus_protocol_messages_total{type="attestation_bulk"} 1153
+amadeus_protocol_messages_total{type="consensus_bulk"} 0
+amadeus_protocol_messages_total{type="catchup_entry"} 0
+amadeus_protocol_messages_total{type="catchup_tri"} 0
+amadeus_protocol_messages_total{type="catchup_bi"} 0
+amadeus_protocol_messages_total{type="catchup_attestation"} 0
+amadeus_protocol_messages_total{type="special_business"} 0
+amadeus_protocol_messages_total{type="special_business_reply"} 0
+amadeus_protocol_messages_total{type="solicit_entry"} 0
+amadeus_protocol_messages_total{type="solicit_entry2"} 0
+
+# HELP amadeus_packets_total Total number of UDP packets received
+# TYPE amadeus_packets_total counter
+amadeus_udp_packets_total 9735
+
+# HELP amadeus_packet_errors_total Total number of packet processing errors by type
+# TYPE amadeus_packet_errors_total counter
+amadeus_packet_errors_total{type="v2_parsing"} 0
+amadeus_packet_errors_total{type="reassembly"} 0
+amadeus_packet_errors_total{type="etf_decode_and_validation"} 0
+amadeus_packet_errors_total{type="handling"} 0
+amadeus_packet_errors_total{type="unknown_proto"} 0
+```
+
 ## Adding core library to other project
 
 ```bash

@@ -150,6 +150,7 @@ impl Epoch {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn slash_trainer(
         &self,
         env: &CallEnv,
@@ -175,7 +176,7 @@ impl Epoch {
         }
 
         // Verify and threshold as in Elixir
-        slash_trainer_verify(epoch, malicious_pk, &trainers, mask_size, mask, signature).map_err(|e| e)?;
+        slash_trainer_verify(epoch, malicious_pk, &trainers, mask_size, mask, signature)?;
 
         // TODO: persist removal into KV and update trainer set and height index
         Ok(())

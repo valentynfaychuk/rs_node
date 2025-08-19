@@ -1,3 +1,4 @@
+#![allow(clippy::module_inception)]
 pub mod agg_sig;
 pub mod attestation;
 pub mod consensus;

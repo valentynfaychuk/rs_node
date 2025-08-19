@@ -53,15 +53,14 @@ pub fn call_txs_pre_parallel_build_sol_cache(
 
     for txu in txus {
         // Find a.submit_sol with at least one arg (sol binary)
-        if let Some(action) = txu.tx.actions.first() {
-            if action.function == "submit_sol" {
-                if let Some(first_arg) = action.args.get(0) {
-                    let hash = blake3::hash(first_arg);
-                    let hash32: [u8; 32] = *hash.as_bytes();
-                    let valid = sol::verify_with_hash(first_arg, &hash32).unwrap_or_else(|_| false);
-                    cache.insert(hash32, valid);
-                }
-            }
+        if let Some(action) = txu.tx.actions.first()
+            && action.function == "submit_sol"
+            && let Some(first_arg) = action.args.first()
+        {
+            let hash = blake3::hash(first_arg);
+            let hash32: [u8; 32] = *hash.as_bytes();
+            let valid = sol::verify_with_hash(first_arg, &hash32).unwrap_or(false);
+            cache.insert(hash32, valid);
         }
     }
 

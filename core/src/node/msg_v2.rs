@@ -61,46 +61,11 @@ pub struct MessageV2 {
 impl TryFrom<&[u8]> for MessageV2 {
     type Error = Error;
     fn try_from(bin: &[u8]) -> Result<Self, Self::Error> {
-        // Must be at least header length
-        if bin.len() < 3 + 3 + 1 + 48 + 96 + 2 + 2 + 8 + 4 {
-            return Err(Error::WrongLength(bin.len()));
-        }
-
-        // Magic
-        if &bin[0..3] != b"AMA" {
-            return Err(Error::InvalidMagic);
-        }
-
-        let version_bytes = &bin[3..6];
-        let version = format!("{}.{}.{}", version_bytes[0], version_bytes[1], version_bytes[2]);
-
-        // Next is 7 zero bits and 1 flag bit, total 1 byte
-        let flag_byte = bin[6];
-        if flag_byte & 0b11111110 != 0 {
-            return Err(Error::InvalidFlags(flag_byte));
-        }
-
-        if flag_byte & 0b00000001 == 0 {
-            return Err(Error::NotSigned);
-        }
-
-        let pk_start = 7;
-        let pk_end = pk_start + 48;
-        let pk = bin[pk_start..pk_end].to_vec();
-
-        let sig_start = pk_end;
-        let sig_end = sig_start + 96;
-        let signature = bin[sig_start..sig_end].to_vec();
-
-        let shard_index = u16::from_be_bytes(bin[sig_end..sig_end + 2].try_into().unwrap());
-        let shard_total = u16::from_be_bytes(bin[sig_end + 2..sig_end + 4].try_into().unwrap());
-
-        let ts_nano = u64::from_be_bytes(bin[sig_end + 4..sig_end + 12].try_into().unwrap());
-        let original_size = u32::from_be_bytes(bin[sig_end + 12..sig_end + 16].try_into().unwrap());
-
-        let payload = bin[sig_end + 16..].to_vec();
-
-        Ok(Self { version, pk, signature, shard_index, shard_total, ts_nano, original_size, payload })
+        crate::metrics::inc_v2udp_packets();
+        Self::try_from_inner(bin).map_err(|e| {
+            crate::metrics::inc_v2_parsing_errors();
+            e
+        })
     }
 }
 
@@ -149,6 +114,52 @@ impl TryInto<Vec<u8>> for MessageV2 {
 }
 
 impl MessageV2 {
+    fn try_from_inner(bin: &[u8]) -> Result<Self, Error> {
+        // Must be at least header length
+        if bin.len() < 3 + 3 + 1 + 48 + 96 + 2 + 2 + 8 + 4 {
+            crate::metrics::inc_v2_parsing_errors();
+            return Err(Error::WrongLength(bin.len()));
+        }
+
+        // Magic
+        if &bin[0..3] != b"AMA" {
+            crate::metrics::inc_v2_parsing_errors();
+            return Err(Error::InvalidMagic);
+        }
+
+        let version_bytes = &bin[3..6];
+        let version = format!("{}.{}.{}", version_bytes[0], version_bytes[1], version_bytes[2]);
+
+        // Next is 7 zero bits and 1 flag bit, total 1 byte
+        let flag_byte = bin[6];
+        if flag_byte & 0b11111110 != 0 {
+            crate::metrics::inc_v2_parsing_errors();
+            return Err(Error::InvalidFlags(flag_byte));
+        }
+
+        if flag_byte & 0b00000001 == 0 {
+            return Err(Error::NotSigned);
+        }
+
+        let pk_start = 7;
+        let pk_end = pk_start + 48;
+        let pk = bin[pk_start..pk_end].to_vec();
+
+        let sig_start = pk_end;
+        let sig_end = sig_start + 96;
+        let signature = bin[sig_start..sig_end].to_vec();
+
+        let shard_index = u16::from_be_bytes(bin[sig_end..sig_end + 2].try_into().unwrap());
+        let shard_total = u16::from_be_bytes(bin[sig_end + 2..sig_end + 4].try_into().unwrap());
+
+        let ts_nano = u64::from_be_bytes(bin[sig_end + 4..sig_end + 12].try_into().unwrap());
+        let original_size = u32::from_be_bytes(bin[sig_end + 12..sig_end + 16].try_into().unwrap());
+
+        let payload = bin[sig_end + 16..].to_vec();
+
+        Ok(Self { version, pk, signature, shard_index, shard_total, ts_nano, original_size, payload })
+    }
+
     fn ver_to_bytes(v: &str) -> Result<[u8; 3], Error> {
         let parts: Vec<&str> = v.split('.').collect();
         if parts.len() != 3 {

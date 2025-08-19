@@ -27,6 +27,15 @@ impl AppState {
     pub fn new() -> Self {
         Self { peers: Arc::new(RwLock::new(HashMap::new())), entries: Arc::new(RwLock::new(vec![])) }
     }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AppState {
 
     fn now_ms() -> u64 {
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
@@ -47,15 +56,11 @@ impl AppState {
             last_msg: None,
         });
         entry.last_seen_ms = Self::now_ms();
-        if let Some(k) = sk.into() {
-            if !k.is_empty() {
-                entry.sk = Some(k);
-            }
+        if let Some(k) = sk.into() && !k.is_empty() {
+            entry.sk = Some(k);
         }
-        if let Some(m) = last_msg.into() {
-            if !m.is_empty() {
-                entry.last_msg = Some(m);
-            }
+        if let Some(m) = last_msg.into() && !m.is_empty() {
+            entry.last_msg = Some(m);
         }
     }
 

@@ -3,6 +3,7 @@ use crate::bic::sol::Solution;
 use crate::consensus::attestation::AttestationBulk;
 use crate::consensus::entry::Entry;
 use crate::consensus::tx;
+use crate::metrics;
 use crate::misc::utils::{TermExt, get_map_field};
 use crate::node::handler::Instruction;
 use eetf::convert::TryAsRef;
@@ -108,6 +109,13 @@ impl From<DecompressError> for Error {
 impl Proto {
     #[instrument(skip(bin), name = "Proto::from_etf_validated")]
     pub fn from_etf_validated(bin: &[u8]) -> Result<Proto, Error> {
+        Self::from_etf_validated_inner(bin).map_err(|e| {
+            crate::metrics::inc_parsing_and_validation_errors();
+            e
+        })
+    }
+
+    pub fn from_etf_validated_inner(bin: &[u8]) -> Result<Proto, Error> {
         let decompressed = decompress_to_vec(bin)?;
         //let term = Term::decode(decompressed.as_slice())?; // decode ETF
         let term = Term::decode(&decompressed[..])?;
@@ -128,6 +136,7 @@ impl Proto {
             "solicit_entry2" => Ok(Proto::SolicitEntry2(SolicitEntry2 {})),
             _ => {
                 warn!("Unknown operation: {}", op_atom.name);
+                crate::metrics::inc_unknown_proto();
                 Err(Error::WrongType("op"))
             }
         }
@@ -154,9 +163,18 @@ impl Proto {
             Proto::SolicitEntry2(_) => "solicit_entry2",
         }
     }
-
     #[instrument(skip(self), name = "Proto::handle")]
     pub fn handle(self) -> Result<Instruction, Error> {
+        Self::handle_inner(self).map_err(|e| {
+            crate::metrics::inc_handling_errors();
+            e
+        })
+    }
+
+    pub fn handle_inner(self) -> Result<Instruction, Error> {
+        // Track metrics for this message type
+        metrics::inc_handled_counter_by_name(self.get_name());
+
         match self {
             Proto::Ping(ping) => ping.handle(),
             Proto::Pong(pong) => pong.handle(),
