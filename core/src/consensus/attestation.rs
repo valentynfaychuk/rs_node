@@ -1,0 +1,169 @@
+use crate::consensus::agg_sig::DST_ATT;
+use crate::misc::bls12_381 as bls;
+use crate::misc::bls12_381::Error as BlsError;
+use crate::misc::utils::{TermExt, get_map_field};
+use crate::node::handler::{HandleExt, Instruction};
+use crate::node::proto::ProtoExt;
+use eetf::DecodeError as EtfDecodeError;
+use eetf::EncodeError as EtfEncodeError;
+use eetf::{Atom, Binary, Term};
+use std::collections::HashMap;
+use std::fmt::Debug;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("wrong type: {0}")]
+    WrongType(&'static str),
+    #[error("missing field: {0}")]
+    Missing(&'static str),
+    #[error("too large")]
+    TooLarge,
+    #[error("not deterministically encoded")]
+    NotDeterministic,
+    #[error("invalid length: {0}")]
+    InvalidLength(&'static str),
+    #[error(transparent)]
+    EtfDecode(#[from] EtfDecodeError),
+    #[error(transparent)]
+    EtfEncode(#[from] EtfEncodeError),
+    #[error(transparent)]
+    Bls(#[from] BlsError),
+}
+
+#[derive(Debug, Clone)]
+pub struct AttestationBulk {
+    pub attestations: Vec<Attestation>,
+}
+
+#[derive(Clone)]
+pub struct Attestation {
+    pub entry_hash: [u8; 32],
+    pub mutations_hash: [u8; 32],
+    pub signer: [u8; 48],
+    pub signature: [u8; 96],
+}
+
+impl Debug for Attestation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Attestation")
+            .field("entry_hash", &bs58::encode(self.entry_hash).into_string())
+            .field("mutations_hash", &bs58::encode(self.mutations_hash).into_string())
+            .field("signer", &bs58::encode(self.signer).into_string())
+            .finish()
+    }
+}
+
+impl ProtoExt for AttestationBulk {
+    type Error = Error;
+
+    fn from_etf_map_validated(map: HashMap<Term, Term>) -> Result<Self, Self::Error> {
+        let list = get_map_field(&map, "attestations_packed")
+            .and_then(|t| t.get_list())
+            .ok_or(Error::Missing("attestations_packed"))?;
+
+        let mut attestations = Vec::with_capacity(list.len());
+        for item in list {
+            let bin = item.get_binary().ok_or(Error::WrongType("attestations_packed:binary"))?;
+            attestations.push(Attestation::from_etf_bin(bin)?);
+        }
+
+        Ok(Self { attestations })
+    }
+}
+
+impl HandleExt for AttestationBulk {
+    type Error = Error;
+
+    fn handle(self) -> Result<Instruction, Self::Error> {
+        // TODO: Handle the attestation bulk
+        Ok(Instruction::Noop)
+    }
+}
+
+impl Attestation {
+    fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
+        let term = Term::decode(bin)?;
+        let map = match term {
+            Term::Map(m) => m.map,
+            _ => return Err(Error::WrongType("attestation map")),
+        };
+        let entry_hash_v = map
+            .get(&Term::Atom(Atom::from("entry_hash")))
+            .and_then(|t| t.get_binary())
+            .map(|b| b.to_vec())
+            .ok_or(Error::Missing("entry_hash"))?;
+        let mutations_hash_v = map
+            .get(&Term::Atom(Atom::from("mutations_hash")))
+            .and_then(|t| t.get_binary())
+            .map(|b| b.to_vec())
+            .ok_or(Error::Missing("mutations_hash"))?;
+        let signer_v = map
+            .get(&Term::Atom(Atom::from("signer")))
+            .and_then(|t| t.get_binary())
+            .map(|b| b.to_vec())
+            .ok_or(Error::Missing("signer"))?;
+        let signature_v = map
+            .get(&Term::Atom(Atom::from("signature")))
+            .and_then(|t| t.get_binary())
+            .map(|b| b.to_vec())
+            .ok_or(Error::Missing("signature"))?;
+
+        Ok(Attestation {
+            entry_hash: entry_hash_v.try_into().map_err(|_| Error::InvalidLength("entry_hash"))?,
+            mutations_hash: mutations_hash_v.try_into().map_err(|_| Error::InvalidLength("mutations_hash"))?,
+            signer: signer_v.try_into().map_err(|_| Error::InvalidLength("signer"))?,
+            signature: signature_v.try_into().map_err(|_| Error::InvalidLength("signature"))?,
+        })
+    }
+    /// Encode into an ETF map with deterministic field set
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("entry_hash")), Term::from(Binary { bytes: self.entry_hash.to_vec() }));
+        m.insert(Term::Atom(Atom::from("mutations_hash")), Term::from(Binary { bytes: self.mutations_hash.to_vec() }));
+        m.insert(Term::Atom(Atom::from("signer")), Term::from(Binary { bytes: self.signer.to_vec() }));
+        m.insert(Term::Atom(Atom::from("signature")), Term::from(Binary { bytes: self.signature.to_vec() }));
+        let term = Term::from(eetf::Map { map: m });
+        let mut out = Vec::new();
+        term.encode(&mut out).map_err(Error::EtfEncode)?;
+        Ok(out)
+    }
+
+    /// Validate sizes and signature with DST_ATT
+    pub fn validate(&self) -> Result<(), Error> {
+        let mut to_sign = [0u8; 64];
+        to_sign[..32].copy_from_slice(&self.entry_hash);
+        to_sign[32..].copy_from_slice(&self.mutations_hash);
+        bls::verify(&self.signer, &self.signature, &to_sign, DST_ATT)?;
+        Ok(())
+    }
+
+    /// Verify this attestation against an allowed set of trainers (public keys).
+    /// Returns Ok(()) only if signer is present in `trainers` and signature is valid.
+    pub fn validate_vs_trainers<TPk>(&self, trainers: &[TPk]) -> Result<(), Error>
+    where
+        TPk: AsRef<[u8]>,
+    {
+        let is_allowed = trainers.iter().any(|pk| pk.as_ref() == self.signer);
+        if !is_allowed {
+            return Err(Error::WrongType("signer_not_trainer"));
+        }
+        self.validate()
+    }
+
+    /// Create an attestation from provided public/secret material.
+    /// NOTE: We intentionally do not read global env here. Caller supplies keys.
+    pub fn sign_with(
+        pk_g1_48: &[u8],
+        sk_seed: &[u8],
+        entry_hash: &[u8; 32],
+        mutations_hash: &[u8; 32],
+    ) -> Result<Self, Error> {
+        let mut msg = [0u8; 64];
+        msg[..32].copy_from_slice(entry_hash);
+        msg[32..].copy_from_slice(mutations_hash);
+        let signature = bls::sign(sk_seed, &msg, DST_ATT)?;
+        let signer: [u8; 48] = pk_g1_48.try_into().map_err(|_| Error::InvalidLength("signer"))?;
+        let signature: [u8; 96] = signature.as_slice().try_into().map_err(|_| Error::InvalidLength("signature"))?;
+        Ok(Self { entry_hash: *entry_hash, mutations_hash: *mutations_hash, signer, signature })
+    }
+}

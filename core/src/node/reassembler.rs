@@ -6,8 +6,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 // does not poison mutex on panic
 
-use super::etf_ser;
-use super::etf_ser::Proto;
 use super::msg_v2::MessageV2;
 use crate::misc::bls12_381;
 use crate::misc::reed_solomon;
@@ -21,8 +19,6 @@ pub struct ReedSolomonReassembler {
 pub enum Error {
     #[error(transparent)]
     ReedSolomon(#[from] reed_solomon::Error),
-    #[error(transparent)]
-    Serializer(#[from] etf_ser::Error),
     #[error(transparent)]
     Bls(#[from] bls12_381::Error),
     #[error("message has no signature")]
@@ -90,14 +86,14 @@ impl ReedSolomonReassembler {
 
     // Adds a shard to the reassembly buffer
     // When enough shards collected, reconstructs
-    pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Proto>, Error> {
+    pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
         let key = ReassemblyKey::from(message);
         let shard = &message.payload;
 
         // Some messages are single-shard only, so we can skip the reorg logic
         if key.shard_total == 1 {
             Self::verify_msg_sig(&key, &message.signature, message.payload.as_slice())?;
-            return Ok(Some(Proto::try_from(message.payload.as_slice())?));
+            return Ok(Some(message.payload.clone()));
         }
 
         let data_shards = (key.shard_total / 2) as usize;
@@ -136,7 +132,7 @@ impl ReedSolomonReassembler {
                 let payload = rs_res.decode_shards(shards, data_shards + parity_shards, msg_size)?;
 
                 Self::verify_msg_sig(&key, &message.signature, payload.as_slice())?;
-                return Ok(Some(Proto::try_from(payload.as_slice())?));
+                return Ok(Some(payload));
             }
         }
         Ok(None)

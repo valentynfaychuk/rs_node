@@ -1,11 +1,14 @@
 /// Entry is a consensus block in Amadeus
 use super::agg_sig::{DST_ENTRY, DST_VRF};
+use crate::config::ENTRY_SIZE;
 use crate::consensus::tx;
 use crate::misc::blake3;
 use crate::misc::bls12_381;
-use crate::node::etf_ser::{Error as ParseError, TermExt, get_map_field};
-use eetf::convert::TryAsRef;
-use eetf::{Atom, Binary, List, Term};
+use crate::misc::utils::{TermExt, get_map_field};
+use crate::node::handler::{HandleExt, Instruction};
+use crate::node::proto::ProtoExt;
+use eetf::Term;
+use std::collections::HashMap;
 use std::fmt;
 
 const MAX_TXS: usize = 100; // Maximum number of transactions in an entry
@@ -59,10 +62,8 @@ impl fmt::Debug for EntryHeader {
     }
 }
 
-impl TryFrom<&[u8]> for EntryHeader {
-    type Error = Error;
-
-    fn try_from(bin: &[u8]) -> Result<Self, Self::Error> {
+impl EntryHeader {
+    fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
         let term = Term::decode(bin).map_err(|e| Error::Decode(e))?;
         let map = match term {
             Term::Map(m) => m.map,
@@ -84,9 +85,6 @@ impl TryFrom<&[u8]> for EntryHeader {
 
         Ok(EntryHeader { slot, dr, height, prev_hash, prev_slot, signer, txs_hash, vr })
     }
-}
-
-impl EntryHeader {
     pub fn validate(&self) -> Result<(), Error> {
         // if self.slot < 0 {
         //     return Err(Error::WrongType("slot_negative"));
@@ -124,6 +122,26 @@ pub struct Entry {
     pub txs: Vec<Vec<u8>>,   // list of tx binaries (can be empty)
 }
 
+impl ProtoExt for Entry {
+    type Error = Error;
+
+    fn from_etf_map_validated(map: HashMap<Term, Term>) -> Result<Self, Self::Error> {
+        let bin =
+            get_map_field(&map, "entry_packed").and_then(|t| t.get_binary()).ok_or(Error::Missing("entry_packed"))?;
+
+        Entry::from_etf_bin_validated(bin, ENTRY_SIZE)
+    }
+}
+
+impl HandleExt for Entry {
+    type Error = Error;
+
+    fn handle(self) -> Result<Instruction, Self::Error> {
+        // TODO: handle entry, e.g. store in database, update state, etc.
+        Ok(Instruction::Noop)
+    }
+}
+
 impl fmt::Debug for Entry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Entry")
@@ -136,12 +154,12 @@ impl fmt::Debug for Entry {
 }
 
 impl Entry {
-    pub fn new(bin: &[u8], entry_size_limit: usize) -> Result<Entry, Error> {
+    pub fn from_etf_bin_validated(bin: &[u8], entry_size_limit: usize) -> Result<Entry, Error> {
         if bin.len() >= entry_size_limit {
             return Err(Error::TooLarge);
         }
 
-        let parsed = ParsedEntry::try_from(bin)?;
+        let parsed = ParsedEntry::from_etf_bin(bin)?;
         parsed.validate_signature()?;
         let is_special = parsed.mask.is_some();
         parsed.entry.validate_contents(is_special)?;
@@ -222,37 +240,29 @@ struct ParsedEntry {
     pub mask: Option<Vec<u8>>, // bitstring as raw bytes if present
 }
 
-impl TryFrom<&[u8]> for ParsedEntry {
-    type Error = Error;
+impl ParsedEntry {
+    fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
+        let term = Term::decode(bin).map_err(|e| Error::Decode(e))?;
+        let map = term.get_map().ok_or(Error::WrongType("entry"))?;
 
-    fn try_from(bin: &[u8]) -> Result<Self, Self::Error> {
-        let t = Term::decode(bin).map_err(|e| Error::Decode(e))?;
-        let m = match t {
-            Term::Map(m) => m.map,
-            _ => return Err(Error::WrongType("entry")),
-        };
-
-        let hash = get_map_field(&m, "hash").and_then(|t| t.get_binary()).ok_or(Error::Missing("hash"))?.to_vec();
+        let hash = get_map_field(&map, "hash").and_then(|t| t.get_binary()).ok_or(Error::Missing("hash"))?.to_vec();
 
         let header_bin =
-            get_map_field(&m, "header").and_then(|t| t.get_binary()).ok_or(Error::Missing("header"))?.to_vec();
-        let header = EntryHeader::try_from(header_bin.as_slice())?;
+            get_map_field(&map, "header").and_then(|t| t.get_binary()).ok_or(Error::Missing("header"))?.to_vec();
+        let header = EntryHeader::from_etf_bin(header_bin.as_slice())?;
 
         let signature =
-            get_map_field(&m, "signature").and_then(|t| t.get_binary()).ok_or(Error::Missing("signature"))?.to_vec();
+            get_map_field(&map, "signature").and_then(|t| t.get_binary()).ok_or(Error::Missing("signature"))?.to_vec();
 
-        let txs: Vec<Vec<u8>> = match get_map_field(&m, "txs").and_then(|t| t.get_list()) {
+        let txs: Vec<Vec<u8>> = match get_map_field(&map, "txs").and_then(|t| t.get_list()) {
             Some(list) => list.iter().filter_map(|t| t.get_binary().map(|b| b.to_vec())).collect(),
             None => Vec::new(),
         };
 
-        let mask = get_map_field(&m, "mask").and_then(|t| t.get_binary()).map(|b| b.to_vec());
+        let mask = get_map_field(&map, "mask").and_then(|t| t.get_binary()).map(|b| b.to_vec());
 
         Ok(ParsedEntry { entry: Entry { hash, header, signature, txs }, header_bin, mask })
     }
-}
-
-impl ParsedEntry {
     fn validate_signature(&self) -> Result<(), Error> {
         if let Some(mask_bytes) = self.mask.as_deref() {
             // Resolve trainers for this height (chain state dependent)

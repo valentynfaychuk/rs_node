@@ -4,9 +4,9 @@ use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 use core::node::ReedSolomonReassembler;
-use core::node::etf_ser::Proto;
-use core::node::handler::HandleResult;
+use core::node::handler::Instruction;
 use core::node::msg_v2::MessageV2;
+use core::node::proto::Proto;
 use core::test_data::ping::PING;
 
 use plot::{serve, state::AppState};
@@ -68,24 +68,21 @@ async fn recv_loop(
             Ok(Err(e)) => return Err(e),
             Ok(Ok((len, src))) => {
                 match handle(&reassembler, &app_state, src, &buf[..len]).await {
-                    Some(HandleResult::Noop) => {}
-                    Some(HandleResult::ReplyPong { .. }) => {
+                    Some(Instruction::Noop) => {}
+                    Some(Instruction::ReplyPong { .. }) => {
                         //println!("reply pong: {}", ts_m);
                     }
-                    Some(HandleResult::ObservedPong { .. }) => {
+                    Some(Instruction::ObservedPong { .. }) => {
                         //println!("observed pong: {} {}", ts_m, seen_time_ms);
                     }
-                    Some(HandleResult::ReceivedEntry { entry }) => {
-                        //println!("{:#?}", entry);
+                    Some(Instruction::ReceivedEntry { .. }) => {
+                        //println!("received entry");
                     }
-                    Some(HandleResult::Attestations { .. }) => {
-                        //println!("received attestation bulk: {:?}", attestations);
+                    Some(Instruction::AttestationBulk { .. }) => {
+                        //println!("received attestation bulk");
                     }
-                    Some(HandleResult::Error(e)) => {
-                        println!("err: {}", e);
-                    }
-                    Some(hr) => {
-                        //println!("handle result {:?}", hr);
+                    Some(_) => {
+                        //println!("handle result (ignored)");
                     }
                     _ => {}
                 }
@@ -99,18 +96,16 @@ async fn handle(
     app_state: &AppState,
     src: SocketAddr,
     bin: &[u8],
-) -> Option<HandleResult> {
+) -> Option<Instruction> {
     if let Ok(msg) = MessageV2::try_from(bin) {
+        // record the peer as seen on ANY successfully parsed message
+        let pk_str = bs58::encode(&msg.pk).into_string();
         match reassembler.add_shard(&msg).await {
-            Ok(Some(proto)) => {
+            Ok(Some(payload)) => {
                 // final shard received - reassembler assembled the message
-                // record the peer as seen on ANY successfully parsed message
-                let pk_str = bs58::encode(&msg.pk).into_string();
+                let proto = Proto::from_etf_validated(&payload).map_err(|e| println!("Can't parse proto: {e}")).ok()?;
                 app_state.seen_peer(src, Some(pk_str), Some(proto.get_name().into())).await;
-
-                //println!("{:#?}", proto);
-
-                return Some(HandleResult::from(proto));
+                return proto.handle().map_err(|e| println!("Error handling proto: {e}")).ok();
             }
             Err(e) => println!("error adding shard: {}", e),
             _ => {}
