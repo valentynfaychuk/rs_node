@@ -254,4 +254,14 @@ mod tests {
             _ => panic!("expected V2"),
         }
     }
+
+    #[test]
+    fn parse_well_known_sol() {
+        // Solution was taken from here https://explorer.ama.one/network/tx/7q8WZu9a2YNcEwhbLGSrJt3aCWefHRMm8nC66sg9YzGd
+        let b58 = "9tvLYXHJMkJ9jFW42R8mZxzEtNmAm8J6gRVUHW2Rubxf5FoY8J8FXd2kaKd338B4uy57Tn3akZ4y6gaYe1Y1tCATcyR6w3rJGeFzL5aebmmExAGsdLPmzYK2CD5pYTTqbVhsQRGwMj2JxjpQHyppt3TY7XZVd1SuafinFKHe1hCXkxRWEAQnxXsBgzZmTDr7S9fnxBpVuBHxvgNefGGDVieD44cSA4LrCmeWA4WaUQby54g9jGhf53QdiQVCMWtaFwDUNnKTMZ1GG2cmNCHDDQqhpRQAqczzL4XqYmnzRF9TVZBEhPFgUnhAHu27FMhnCv8zqeg3ujrXvnX1SyGaBL7sJqG9FEcJbYLpisgnuwpYinUbDcg5tYgPZeBw28NYUvbc1xr9bnfSznxkHH5npZ2cA8uXq753FybTd5wd67FBHTKe7dW76JB2chxHK3Q2UGRf67oTb7wZC7SQtZt7bg9CWnLGe7bfYFKwR1U5dSzKroqkZ9Taunh4VswZCnEAhZJyFt5rw5fB8SnHQJgtnDomCdxbJUxByY9ekE4Jvr3DDhwtzf2YZuHMniE67TcNNoKTLsJxhJFGo1ct2mJv6iMPQXEYHqioQ7uzrLw42tzEQF6DQ9a6972duwfymfW98mueJpwNjsK8m52BdH7cEYqzAFj4nusZmm9vmjjKUy6aPD2MgMccyW18Dy8bpKrTCH9KTzGzeXHgHbNha44WPcCkGxqbMVWHdHVwSVPD9mJqwJGvrKAba15EobNQAnCJGJy4McGaGsChMrQXXrzakLjTtKjkrmWSbPxcjwLiBzf7dvhWUmzFZuxSdMbDRj2zFqsMqLDgZTTFMGoqBrwiwEyj8pQHy9DCiSRQWbycT4DdsFTKVrfgFNvA1XvUaptjSXozLASYS9SgXdjBTNsmCUsHrkdwHVVzFN6MNUAhjv7yF6X8yCmUMwrG1DQgmmJ4ADrzSP73xA5wMEVy2TWqy3ms69rLdjC4cgqKYsUwZVUkvamLoppLBsVh95yVPJuutmdsYHqiTxs8dQ4ymdu8uKZ5tcdnRL2HfRU6Xdjo99ws4Bwe8Pmx1WHWRgg83YV9E2nsWfreaSYrW8UTz7bNsPsQtmxzvdKq1RdnfTJWgAv5EPN2ZL3jBdE7pfGgEzw98W8EpLZGWDZSFUrht8GFTzUrUVR75WXVqWJdRk5hpetE3H67MCS3ujMvr4W1cNzmheJoCDh5SbFXj49S2ftUYcD4BVdfX451sKkRwuEeofKJoGBL4p3rdo3izFyBdJvMY8GrLMxYrS9adAqXjiLt16KBm5xYo6BdXygsrZfs54dWJUhzVVturAuXLPKecn5SJCxKhUy9KYxCNZaLcqCBWYX76EFZoBt9uAPbPNUNUWWQc9JA4yTveJ7J1uUpv2Qfam57ozbPuF5JkteymMpwWLHbC3UsY35orLeHRVhpj15dqTPDkF1ASjDPXXDJgwmtBCzJ1j8UXYwnxojNTsXLkBMRx8PX2phef88SznTnZhKVyMujpczgbPCafRGBXYpmAisQ39tyreT6n1pveg5LoFjWr9jDDEdRwQCoiyzg3ZSSzrfgnqfBYSK1f6ktA5Xceg1fp3FFpV4Yc3uvnKXdgRnvtm6ZV5mDqHQUUr73r1HoiK4y52THc6NvqpkosrZJsiAKf1eXHF8Rbjz6MD1ZxN7mAVnc4YYyPJgKrhuijF8WTrHx9WdNFzZBSJLC2J";
+        let bin = bs58::decode(b58).into_vec().unwrap();
+        let sol = Solution::new(&bin).unwrap();
+        assert!(matches!(sol, Solution::V2(SolV2 { epoch: 274, .. })));
+        println!("{:?}", sol);
+    }
 }
