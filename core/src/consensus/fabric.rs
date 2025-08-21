@@ -81,7 +81,7 @@ pub fn insert_genesis() -> Result<(), Error> {
 
     println!("🌌  Ahhh... Fresh Fabric. Marking genesis..");
 
-    let hash = genesis_entry.hash.clone();
+    let hash = genesis_entry.hash;
     let height = genesis_entry.header.height;
     let slot = genesis_entry.header.slot;
     let entry_bin: Vec<u8> = genesis_entry.try_into().map_err(|_| Error::Missing("genesis_entry"))?;
@@ -89,7 +89,7 @@ pub fn insert_genesis() -> Result<(), Error> {
 
     // insert genesis attestation aggregate (no-op until full trainers implemented)
     let att = entry_gen::attestation();
-    let _ = aggregate_attestation(&att)?;
+    aggregate_attestation(&att)?;
 
     // set rooted_tip = genesis.hash and temporal_height = 0
     set_rooted_tip(&hash)?;

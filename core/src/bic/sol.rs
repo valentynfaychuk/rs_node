@@ -2,6 +2,7 @@ use crate::misc::blake3;
 use crate::misc::utils::TermMap;
 use crate::node::proto;
 use crate::node::proto::Proto;
+use eetf::{Atom, Term};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -74,13 +75,60 @@ impl Proto for Solution {
         // cache the solution
         Ok(proto::Instruction::Noop)
     }
+
+    fn to_etf_bin(&self) -> Result<Vec<u8>, proto::Error> {
+        // convert solution back to binary format
+        let sol_bin = match self {
+            Solution::V2(v2) => {
+                let mut buf = Vec::with_capacity(SOL_SIZE);
+                buf.extend_from_slice(&v2.epoch.to_le_bytes());
+                buf.extend_from_slice(&v2.segment_vr_hash);
+                buf.extend_from_slice(&v2.pk);
+                buf.extend_from_slice(&v2.pop);
+                buf.extend_from_slice(&v2.computor);
+                buf.extend_from_slice(&[0u8; 12]); // nonce placeholder
+                buf.extend_from_slice(&v2.tensor_c);
+                buf
+            }
+            Solution::V1(v1) => {
+                let mut buf = Vec::with_capacity(320);
+                buf.extend_from_slice(&v1.epoch.to_le_bytes());
+                buf.extend_from_slice(&v1.pk);
+                buf.extend_from_slice(&v1.pop);
+                buf.extend_from_slice(&v1.computor);
+                buf.extend_from_slice(&v1.segment_vr);
+                // pad to expected size
+                buf.resize(320, 0);
+                buf
+            }
+            Solution::V0(v0) => {
+                let mut buf = Vec::with_capacity(256);
+                buf.extend_from_slice(&v0.epoch.to_le_bytes());
+                buf.extend_from_slice(&v0.pk);
+                buf.extend_from_slice(&v0.pop);
+                buf.extend_from_slice(&v0.computor);
+                // pad to expected size
+                buf.resize(256, 0);
+                buf
+            }
+        };
+
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("sol")), Term::from(eetf::Binary { bytes: sol_bin }));
+
+        let term = Term::from(eetf::Map { map: m });
+        let mut out = Vec::new();
+        term.encode(&mut out).map_err(proto::Error::EtfEncode)?;
+        Ok(out)
+    }
 }
 
 impl Solution {
     pub const NAME: &'static str = "sol";
 
     pub fn from_etf_validated(bin: &[u8]) -> Result<Self, Error> {
-        if Self::validate(&bin)? { Self::unpack(&bin) } else { Err(Error::InvalidSolSeedSize) }
+        if Self::validate(bin)? { Self::unpack(bin) } else { Err(Error::InvalidSolSeedSize) }
     }
 
     pub fn unpack(sol: &[u8]) -> Result<Self, Error> {
@@ -158,9 +206,7 @@ impl Solution {
 pub fn verify_hash(epoch: u32, hash: &[u8; 32]) -> bool {
     if epoch >= 244 {
         hash[0] == 0 && hash[1] == 0 && hash[2] == 0
-    } else if epoch >= 156 {
-        hash[0] == 0 && hash[1] == 0
-    } else if epoch >= 1 {
+    } else if epoch >= 1 { // there may be separate case for 156
         hash[0] == 0 && hash[1] == 0
     } else {
         hash[0] == 0
@@ -182,12 +228,10 @@ pub fn cache_mark_valid(sol: &[u8]) {
 }
 
 fn verify_cache(epoch: u32, sol: &[u8], _use_upow1: bool) -> bool {
-    if let Some(is_valid) = SOL_VERIFY_CACHE.lock().unwrap().get(sol).copied() {
-        if is_valid {
-            // delete like :ets.delete
-            SOL_VERIFY_CACHE.lock().unwrap().remove(sol);
-            return true;
-        }
+    if let Some(is_valid) = SOL_VERIFY_CACHE.lock().unwrap().get(sol).copied() && is_valid {
+        // delete like :ets.delete
+        SOL_VERIFY_CACHE.lock().unwrap().remove(sol);
+        return true;
     }
     // module.calculate(sol) placeholder: use blake3 hash
     let hash: [u8; 32] = blake3::hash(sol);

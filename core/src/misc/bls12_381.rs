@@ -92,7 +92,7 @@ fn sign_from_scalar(scalar: Scalar, msg: &[u8], dst: &[u8]) -> Result<BlsSignatu
     Ok(sk.sign(msg, dst, &[]))
 }
 
-// Public API
+// public API
 
 /// Derive compressed G1 public key (48 bytes) from seed (32 or 64 bytes)
 pub fn get_public_key(seed: &[u8]) -> Result<[u8; 48], Error> {
@@ -127,7 +127,7 @@ pub fn verify(pk_bytes: &[u8], sig_bytes: &[u8], msg: &[u8], dst: &[u8]) -> Resu
 }
 
 /// Aggregate multiple compressed G1 public keys into one compressed G1 public key (48 bytes)
-pub fn aggregate_public_keys<'a, T>(public_keys: T) -> Result<[u8; 48], Error>
+pub fn aggregate_public_keys<T>(public_keys: T) -> Result<[u8; 48], Error>
 where
     T: IntoIterator,
     T::Item: AsRef<[u8]>,
@@ -140,13 +140,13 @@ where
     let mut acc = parse_public_key(first.as_ref())?;
     for pk in iter {
         let p = parse_public_key(pk.as_ref())?;
-        acc = acc + p;
+        acc += p;
     }
     Ok(acc.to_affine().to_compressed())
 }
 
 /// Aggregate multiple signatures (compressed G2, 96 bytes) into one compressed G2 (96 bytes)
-pub fn aggregate_signatures<'a, T>(signatures: T) -> Result<[u8; 96], Error>
+pub fn aggregate_signatures<T>(signatures: T) -> Result<[u8; 96], Error>
 where
     T: IntoIterator,
     T::Item: AsRef<[u8]>,
@@ -159,7 +159,7 @@ where
     let mut acc = parse_signature(first.as_ref())?;
     for s in iter {
         let p = parse_signature(s.as_ref())?;
-        acc = acc + p;
+        acc += p;
     }
     Ok(acc.to_affine().to_compressed())
 }
@@ -174,4 +174,89 @@ pub fn get_shared_secret(public_key: &[u8], seed: &[u8]) -> Result<[u8; 48], Err
 /// Validate a compressed G1 public key.
 pub fn validate_public_key(public_key: &[u8]) -> Result<(), Error> {
     parse_public_key(public_key).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seed32(b: u8) -> [u8; 32] {
+        [b; 32]
+    }
+
+    #[test]
+    fn pk_sign_verify_and_validate() {
+        let seed = seed32(1);
+        let pk = get_public_key(&seed).expect("pk");
+        validate_public_key(&pk).expect("valid pk");
+
+        let msg = b"context7:message";
+        let dst = b"CONTEXT7-BLS-DST";
+        let sig = sign(&seed, msg, dst).expect("sign");
+        verify(&pk, &sig, msg, dst).expect("verify");
+    }
+
+    #[test]
+    fn shared_secret_symmetry() {
+        let a = seed32(2);
+        let b = seed32(3);
+        let pk_a = get_public_key(&a).unwrap();
+        let pk_b = get_public_key(&b).unwrap();
+        let ab = get_shared_secret(&pk_b, &a).unwrap();
+        let ba = get_shared_secret(&pk_a, &b).unwrap();
+        assert_eq!(ab, ba);
+    }
+
+    #[test]
+    fn aggregation_behaviour() {
+        let s1 = seed32(4);
+        let s2 = seed32(5);
+        let pk1 = get_public_key(&s1).unwrap();
+        let pk2 = get_public_key(&s2).unwrap();
+
+        // test single public key aggregation
+        let agg1 = aggregate_public_keys([pk1]).unwrap();
+        assert_eq!(agg1.len(), 48);
+        assert_eq!(agg1, pk1); // single key aggregation should equal original key
+
+        // test multiple public key aggregation
+        let agg_pk = aggregate_public_keys([pk1, pk2]).unwrap();
+        assert_eq!(agg_pk.len(), 48);
+        assert_ne!(agg_pk, pk1); // aggregated key should differ from individual keys
+        assert_ne!(agg_pk, pk2);
+
+        // zero-sized input should fail
+        assert!(matches!(aggregate_public_keys::<[&[u8]; 0]>([]), Err(Error::ZeroSizedInput)));
+
+        // test signature aggregation
+        let dst = b"DST";
+        let msg = b"m";
+        let sig1 = sign(&s1, msg, dst).unwrap();
+        let sig2 = sign(&s2, msg, dst).unwrap();
+
+        // test single signature aggregation
+        let agg_sig1 = aggregate_signatures([sig1.as_slice()]).unwrap();
+        assert_eq!(agg_sig1.len(), 96);
+        assert_eq!(agg_sig1, sig1); // single signature aggregation should equal original
+
+        // test multiple signature aggregation
+        let agg_sig = aggregate_signatures([sig1.as_slice(), sig2.as_slice()]).unwrap();
+        assert_eq!(agg_sig.len(), 96);
+        assert_ne!(agg_sig, sig1); // aggregated signature should differ from individual signatures
+        assert_ne!(agg_sig, sig2);
+
+        // zero-sized signature input should fail
+        assert!(matches!(aggregate_signatures::<[&[u8]; 0]>([]), Err(Error::ZeroSizedInput)));
+
+        // test that aggregated signature verifies against aggregated public key
+        verify(&agg_pk, &agg_sig, msg, dst).expect("aggregated signature should verify against aggregated public key");
+
+        // test that individual signatures don't verify against aggregated public key
+        assert!(verify(&agg_pk, &sig1, msg, dst).is_err());
+        assert!(verify(&agg_pk, &sig2, msg, dst).is_err());
+
+        // test that aggregated signature doesn't verify against individual public keys
+        assert!(verify(&pk1, &agg_sig, msg, dst).is_err());
+        assert!(verify(&pk2, &agg_sig, msg, dst).is_err());
+    }
 }

@@ -36,8 +36,8 @@ struct ReassemblyKey {
 }
 
 impl From<&MessageV2> for ReassemblyKey {
-    fn from(&MessageV2 { ref pk, ts_nano, shard_total, .. }: &MessageV2) -> Self {
-        Self { pk: pk.clone(), ts_nano, shard_total }
+    fn from(&MessageV2 { pk, ts_nano, shard_total, .. }: &MessageV2) -> Self {
+        Self { pk, ts_nano, shard_total }
     }
 }
 
@@ -60,6 +60,13 @@ enum EntryState {
     Collecting(HashMap<u16, Vec<u8>>), // shard_index -> shard bytes
     Spent,
 }
+
+impl Default for ReedSolomonReassembler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 
 impl ReedSolomonReassembler {
     pub fn new() -> Self {
@@ -89,10 +96,7 @@ impl ReedSolomonReassembler {
     }
 
     pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
-        self.add_shard_inner(message).await.map_err(|e| {
-            crate::metrics::inc_reassembly_errors();
-            e
-        })
+        self.add_shard_inner(message).await.inspect_err(|_| crate::metrics::inc_reassembly_errors())
     }
 
     // adds a shard to the reassembly buffer

@@ -28,7 +28,7 @@ fn cf_names() -> &'static [&'static str] {
         "tx_receiver_nonce",
         "my_seen_time_for_entry",
         "my_attestation_for_entry",
-        // "my_mutations_hash_for_entry", // was commented in Elixir, skipping for now
+        // "my_mutations_hash_for_entry",
         "consensus",
         "consensus_by_entryhash",
         "contractstate",
@@ -95,9 +95,9 @@ pub fn iter_prefix(cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, E
     let mut ro = ReadOptions::default();
     ro.set_prefix_same_as_start(true);
     let mode = IteratorMode::From(prefix, Direction::Forward);
-    let mut it = h.db.iterator_cf_opt(&cf_h, ro, mode);
+    let it = h.db.iterator_cf_opt(&cf_h, ro, mode);
     let mut out = Vec::new();
-    while let Some(kv) = it.next() {
+    for kv in it {
         let (k, v) = kv?;
         if !k.starts_with(prefix) {
             break;
@@ -122,4 +122,48 @@ pub fn get_prev_or_first(cf: &str, prefix: &str, key_suffix: &str) -> Result<Opt
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_base() -> String {
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let pid = std::process::id();
+        format!("{}/rs_node_rocks_test_{}_{}", std::env::temp_dir().display(), pid, ts)
+    }
+
+    #[tokio::test]
+    async fn rocksdb_basic_ops_and_iters() {
+        let base = unique_base();
+        init(&base).await.expect("init db");
+
+        // basic put/get on default CF
+        put("default", b"a:1", b"v1").expect("put");
+        let v = get("default", b"a:1").expect("get").unwrap();
+        assert_eq!(v, b"v1");
+
+        // insert a few keys with common prefix for iter_prefix
+        for i in 0..5u8 {
+            put("default", format!("p:{}", i).as_bytes(), &[i]).unwrap();
+        }
+        let items = iter_prefix("default", b"p:").expect("iter_prefix");
+        assert!(!items.is_empty());
+        for (k, _v) in &items {
+            assert!(k.starts_with(b"p:"));
+        }
+
+        // test get_prev_or_first semantics
+        put("default", b"h:001", b"x").unwrap();
+        put("default", b"h:010", b"y").unwrap();
+        put("default", b"h:020", b"z").unwrap();
+
+        let r = get_prev_or_first("default", "h:", "015").unwrap().unwrap();
+        assert_eq!(r.0, b"h:010");
+        let r2 = get_prev_or_first("default", "h:", "000").unwrap();
+        assert!(r2.is_none());
+        let r3 = get_prev_or_first("default", "h:", "999").unwrap().unwrap();
+        assert_eq!(r3.0, b"h:020");
+    }
 }

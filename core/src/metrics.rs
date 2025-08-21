@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
+static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
 
 pub struct Metrics {
     // Core protocol messages

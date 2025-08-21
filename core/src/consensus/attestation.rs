@@ -6,7 +6,7 @@ use crate::node::proto;
 use crate::node::proto::Proto;
 use eetf::DecodeError as EtfDecodeError;
 use eetf::EncodeError as EtfEncodeError;
-use eetf::{Atom, Binary, Term};
+use eetf::{Atom, Binary, List, Term};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use tracing::{instrument, warn};
@@ -77,6 +77,28 @@ impl Proto for AttestationBulk {
     async fn handle_inner(&self) -> Result<proto::Instruction, proto::Error> {
         // TODO: handle the attestation bulk
         Ok(proto::Instruction::Noop)
+    }
+
+    fn to_etf_bin(&self) -> Result<Vec<u8>, proto::Error> {
+        // create list of attestation binaries
+        let attestation_terms: Result<Vec<Term>, Error> =
+            self.attestations.iter().map(|att| att.to_etf_bin().map(|bin| Term::from(Binary { bytes: bin }))).collect();
+
+        let attestation_list = attestation_terms.map_err(proto::Error::Att)?;
+
+        // encode the list to binary for attestations_packed field
+        let attestations_list_term = Term::from(List { elements: attestation_list });
+        let mut attestations_packed = Vec::new();
+        attestations_list_term.encode(&mut attestations_packed).map_err(proto::Error::EtfEncode)?;
+
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("attestations_packed")), Term::from(Binary { bytes: attestations_packed }));
+
+        let term = Term::from(eetf::Map { map: m });
+        let mut out = Vec::new();
+        term.encode(&mut out).map_err(proto::Error::EtfEncode)?;
+        Ok(out)
     }
 }
 

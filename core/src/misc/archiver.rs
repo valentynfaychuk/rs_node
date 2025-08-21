@@ -46,3 +46,42 @@ pub async fn store<'a>(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::fs::{read, read_to_string};
+
+    fn unique_base() -> String {
+        let ts = crate::misc::utils::get_unix_nanos_now();
+        let pid = std::process::id();
+        format!("{}/rs_node_archiver_test_{}_{}", std::env::temp_dir().display(), pid, ts)
+    }
+
+    #[tokio::test]
+    async fn archiver_end_to_end_single_test() {
+        // store before init must error
+        let err = store(b"x", "", "a.bin").await.err().expect("should error before init");
+        matches!(err, Error::OnceCell(_));
+
+        // init creates base/log and is idempotent
+        let base = unique_base();
+        init(&base).await.expect("init ok");
+        init(&base).await.expect("init idempotent");
+
+        // store without subdir
+        store(b"hello", "", "one.txt").await.expect("store ok");
+        let content = read(format!("{}/log/one.txt", base)).await.expect("read file");
+        assert_eq!(content, b"hello");
+
+        // append
+        store(b" world", "", "one.txt").await.expect("append ok");
+        let s = read_to_string(format!("{}/log/one.txt", base)).await.expect("read string");
+        assert_eq!(s, "hello world");
+
+        // subdir write
+        store(b"sub", "subd", "two.bin").await.expect("subdir store");
+        let content2 = read(format!("{}/log/subd/two.bin", base)).await.expect("read file2");
+        assert_eq!(content2, b"sub");
+    }
+}

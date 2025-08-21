@@ -193,6 +193,20 @@ impl Proto for Entry {
     async fn handle_inner(&self) -> Result<proto::Instruction, proto::Error> {
         self.handle_inner().await.map_err(Into::into)
     }
+
+    fn to_etf_bin(&self) -> Result<Vec<u8>, proto::Error> {
+        // encode entry as bincode first
+        let entry_bin: Vec<u8> = self.clone().try_into().map_err(|e: Error| proto::Error::Entry(e))?;
+
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("entry_packed")), Term::from(Binary { bytes: entry_bin }));
+
+        let term = Term::from(Map { map: m });
+        let mut out = Vec::new();
+        term.encode(&mut out).map_err(proto::Error::EtfEncode)?;
+        Ok(out)
+    }
 }
 
 impl fmt::Debug for Entry {
@@ -212,20 +226,18 @@ impl Entry {
     async fn handle_inner(&self) -> Result<proto::Instruction, Error> {
         let height = self.header.height;
 
-        // Compute rooted_tip_height if possible
+        // compute rooted_tip_height if possible
         let rooted_height = fabric::get_rooted_tip()
             .ok()
             .flatten()
             .map(TryInto::try_into)
-            .map(|h| h.ok())
-            .flatten()
-            .map(|h| fabric::get_entry_by_hash(&h))
-            .flatten()
+            .and_then(|h| h.ok())
+            .and_then(|h| fabric::get_entry_by_hash(&h))
             .map(|e| e.header.height)
             .unwrap_or(0);
 
         if height >= rooted_height {
-            let hash = self.hash.clone();
+            let hash = self.hash;
             let epoch = self.get_epoch();
             let slot = self.header.slot; // height is the same as slot in amadeus
             let bin: Vec<u8> = self.clone().try_into()?;
@@ -279,10 +291,10 @@ impl Entry {
             slot,
             height: self.header.height + 1,
             prev_slot: self.header.slot as i64,
-            prev_hash: self.hash.clone(),
+            prev_hash: self.hash,
             dr,
             vr,
-            signer: signer_pk.clone(),
+            signer: *signer_pk,
             txs_hash: [0u8; 32], // to be filled when txs are known
         })
     }
@@ -294,7 +306,7 @@ impl Entry {
     pub fn contains_tx(&self, tx_function: &str) -> bool {
         self.txs.iter().any(|txp| {
             if let Ok(txu) = TxU::from_vanilla(txp) {
-                if let Some(first) = txu.tx.actions.get(0) { first.function == tx_function } else { false }
+                if let Some(first) = txu.tx.actions.first() { first.function == tx_function } else { false }
             } else {
                 false
             }
@@ -327,7 +339,7 @@ impl ParsedEntry {
             // resolve trainers for this height (chain state dependent)
             if let Some(trainers) = consensus::trainers_for_height(self.entry.header.height) {
                 // unmask trainers who have signed using the provided bitmask
-                let signed: Vec<[u8; 48]> = bic::epoch::unmask_trainers(&trainers, &mask);
+                let signed: Vec<[u8; 48]> = bic::epoch::unmask_trainers(&trainers, mask);
                 if signed.is_empty() {
                     // no signers in mask -> invalid aggregate signature
                     return Err(Error::BadAggSignature);

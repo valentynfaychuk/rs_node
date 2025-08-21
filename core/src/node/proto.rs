@@ -44,6 +44,8 @@ pub trait Proto: Send + Sync {
         }
     }
     async fn handle_inner(&self) -> Result<Instruction, Error>;
+    /// Convert to ETF binary format
+    fn to_etf_bin(&self) -> Result<Vec<u8>, Error>;
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -103,16 +105,12 @@ pub enum Instruction {
 /// Also does the validation
 #[instrument(skip(bin), name = "Proto::from_etf_validated")]
 pub fn from_etf_bin(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
-    from_etf_bin_inner(bin).map_err(|error| {
-        metrics::inc_parsing_and_validation_errors();
-        error
-    })
+    from_etf_bin_inner(bin).inspect_err(|_| metrics::inc_parsing_and_validation_errors())
 }
 
 fn from_etf_bin_inner(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
     let decompressed = decompress_to_vec(bin)?;
-    //let term = Term::decode(decompressed.as_slice())?; // decode ETF
-    let term = Term::decode(&decompressed[..])?;
+    let term = Term::decode(decompressed.as_slice())?;
     let map = term.get_term_map().ok_or(Error::BadEtf("map"))?;
 
     // `op` determines the variant
@@ -220,6 +218,10 @@ impl Proto for Ping {
     }
     async fn handle_inner(&self) -> Result<Instruction, Error> {
         Ok(Instruction::ReplyPong { ts_m: self.ts_m })
+    }
+
+    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        Ping::to_etf_bin(self)
     }
 }
 
@@ -381,6 +383,17 @@ impl Proto for Pong {
         // TODO: update ETS-like peer table with latency now_ms - p.ts_m
         Ok(Instruction::Noop)
     }
+
+    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("ts_m")), Term::from(eetf::BigInteger { value: self.ts_m.into() }));
+
+        let term = Term::from(Map { map: m });
+        let mut out = Vec::new();
+        term.encode(&mut out).map_err(Error::EtfEncode)?;
+        Ok(out)
+    }
 }
 
 impl Pong {
@@ -402,6 +415,26 @@ impl Proto for TxPool {
     async fn handle_inner(&self) -> Result<Instruction, Error> {
         // TODO: update ETS-like tx pool with valid_txs
         Ok(Instruction::Noop)
+    }
+
+    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        // create list of transaction binaries
+        let tx_terms: Vec<Term> = self.valid_txs.iter().map(|tx| Term::from(Binary { bytes: tx.clone() })).collect();
+
+        let txs_list = Term::from(List { elements: tx_terms });
+
+        // encode the list to binary for txs_packed field
+        let mut txs_packed = Vec::new();
+        txs_list.encode(&mut txs_packed).map_err(Error::EtfEncode)?;
+
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("txs_packed")), Term::from(Binary { bytes: txs_packed }));
+
+        let term = Term::from(Map { map: m });
+        let mut out = Vec::new();
+        term.encode(&mut out).map_err(Error::EtfEncode)?;
+        Ok(out)
     }
 }
 
@@ -458,8 +491,98 @@ impl Proto for Peers {
         // TODO: update ETS-like peer table with new IPs
         Ok(Instruction::Noop)
     }
+
+    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        // create list of IP strings
+        let ip_terms: Vec<Term> =
+            self.ips.iter().map(|ip| Term::from(Binary { bytes: ip.as_bytes().to_vec() })).collect();
+
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("ips")), Term::from(List { elements: ip_terms }));
+
+        let term = Term::from(Map { map: m });
+        let mut out = Vec::new();
+        term.encode(&mut out).map_err(Error::EtfEncode)?;
+        Ok(out)
+    }
 }
 
 impl Peers {
     pub const NAME: &'static str = "peers";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::consensus::entry::{EntryHeader, EntrySummary};
+    use miniz_oxide::deflate::{CompressionLevel, compress_to_vec};
+
+    #[tokio::test]
+    async fn test_ping_etf_roundtrip() {
+        // create a sample ping message
+        let temporal = create_dummy_entry_summary();
+        let rooted = create_dummy_entry_summary();
+        let ping = Ping::new(temporal, rooted);
+
+        // serialize to ETF
+        let etf_bin = ping.to_etf_bin().expect("should serialize");
+
+        // compress for transmission (as expected by from_etf_bin)
+        let compressed = compress_to_vec(&etf_bin, CompressionLevel::DefaultLevel as u8);
+
+        // deserialize back
+        let result = from_etf_bin(&compressed).expect("should deserialize");
+
+        // check that we get the right type
+        assert_eq!(result.get_name(), "ping");
+    }
+
+    #[tokio::test]
+    async fn test_pong_etf_roundtrip() {
+        let pong = Pong { ts_m: 1234567890, seen_time_ms: 9876543210 };
+
+        let etf_bin = pong.to_etf_bin().expect("should serialize");
+        let compressed = compress_to_vec(&etf_bin, CompressionLevel::DefaultLevel as u8);
+        let result = from_etf_bin(&compressed).expect("should deserialize");
+
+        assert_eq!(result.get_name(), "pong");
+    }
+
+    #[tokio::test]
+    async fn test_txpool_etf_roundtrip() {
+        let txpool = TxPool { valid_txs: vec![vec![1, 2, 3], vec![4, 5, 6]] };
+
+        let etf_bin = txpool.to_etf_bin().expect("should serialize");
+        let compressed = compress_to_vec(&etf_bin, CompressionLevel::DefaultLevel as u8);
+        let result = from_etf_bin(&compressed).expect("should deserialize");
+
+        assert_eq!(result.get_name(), "txpool");
+    }
+
+    #[tokio::test]
+    async fn test_peers_etf_roundtrip() {
+        let peers = Peers { ips: vec!["192.168.1.1".to_string(), "10.0.0.1".to_string()] };
+
+        let etf_bin = peers.to_etf_bin().expect("should serialize");
+        let compressed = compress_to_vec(&etf_bin, CompressionLevel::DefaultLevel as u8);
+        let result = from_etf_bin(&compressed).expect("should deserialize");
+
+        assert_eq!(result.get_name(), "peers");
+    }
+
+    fn create_dummy_entry_summary() -> EntrySummary {
+        let header = EntryHeader {
+            height: 1,
+            slot: 1,
+            prev_slot: 0,
+            prev_hash: [0u8; 32],
+            dr: [1u8; 32],
+            vr: [2u8; 96],
+            signer: [3u8; 48],
+            txs_hash: [4u8; 32],
+        };
+
+        EntrySummary { header, signature: [5u8; 96], mask: None }
+    }
 }

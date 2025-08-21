@@ -3,6 +3,12 @@
 /// Infallible implementation of Blake3 hashing algorithm
 pub struct Hasher(blake3::Hasher);
 
+impl Default for Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Hasher {
     pub fn new() -> Self {
         Self(blake3::Hasher::new())
@@ -47,6 +53,51 @@ pub fn keyed_hash(key: &[u8; 32], buf: &[u8]) -> [u8; 32] {
     blake3::keyed_hash(key, buf).as_bytes().to_owned()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_and_hasher_consistency() {
+        let data = b"hello world";
+        let one_shot = hash(data);
+        let mut h = Hasher::new();
+        h.update(b"hello");
+        h.update(b" world");
+        let inc = h.finalize();
+        assert_eq!(one_shot, inc);
+
+        // XOF length and prefix check
+        let xof = h.finalize_xof(64);
+        assert_eq!(xof.len(), 64);
+        assert_eq!(inc.as_slice(), &xof[..32]);
+
+        // compare with crate reference
+        assert_eq!(one_shot, blake3::hash(data).as_bytes().to_owned());
+    }
+
+    #[test]
+    fn derive_and_keyed_hash_match_reference() {
+        let key = [7u8; 32];
+        let msg = b"abc";
+        let kd = derive_key("context7:test", b"input_key");
+        assert_eq!(kd, blake3::derive_key("context7:test", b"input_key"));
+
+        let ours = keyed_hash(&key, msg);
+        let theirs = blake3::keyed_hash(&key, msg).as_bytes().to_owned();
+        assert_eq!(ours, theirs);
+    }
+
+    #[test]
+    fn freivalds_is_deterministic() {
+        // minimal tensor length to satisfy internal slicing: 240 head + 1024 tail
+        let tensor = vec![0u8; 240 + 1024];
+        let a = freivalds(&tensor);
+        let b = freivalds(&tensor);
+        assert_eq!(a, b);
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 use std::{cell::RefCell, mem, mem::MaybeUninit, ptr, slice};
@@ -61,7 +112,7 @@ struct AMAMatMul {
 }
 
 thread_local! {
-    static SCRATCH: RefCell<Option<Box<AMAMatMul>>> = RefCell::new(None);
+    static SCRATCH: RefCell<Option<Box<AMAMatMul>>> = const { RefCell::new(None) };
 }
 
 struct ScratchGuard {
@@ -92,9 +143,9 @@ fn borrow_scratch() -> ScratchGuard {
     SCRATCH.with(|tls| {
         let mut slot = tls.borrow_mut();
         let buf = slot.take().unwrap_or_else(|| {
-            // First time on this thread: allocate **uninitialised** memory.
+            // first time on this thread: allocate **uninitialised** memory
             let boxed_uninit: Box<MaybeUninit<AMAMatMul>> = Box::new_uninit(); // ≈ zero cost for the OS here
-            // SAFETY: we promise to fully overwrite every byte before reading.
+            // SAFETY: we promise to fully overwrite every byte before reading
             unsafe { boxed_uninit.assume_init() }
         });
         ScratchGuard { buf: Some(buf) }
@@ -187,7 +238,7 @@ pub fn freivalds_inner(
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn hsum256_epi32(v: __m256i) -> i32 {
-    // Reduce 8 × i32 → scalar
+    // reduce 8 × i32 → scalar
     let hi = _mm256_extracti128_si256(v, 1);
     let lo = _mm256_castsi256_si128(v);
     let sum128 = _mm_add_epi32(lo, hi); // 4 lanes

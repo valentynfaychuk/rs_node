@@ -37,7 +37,7 @@ impl ReedSolomonResource {
             let mut buffer = [0u8; SHARD_SIZE];
             buffer[..chunk.len()].copy_from_slice(chunk);
 
-            self.encoder.add_original_shard(&buffer)?;
+            self.encoder.add_original_shard(buffer)?;
 
             let bin = buffer.to_vec();
             encoded_shards.push((itr, bin));
@@ -65,11 +65,10 @@ impl ReedSolomonResource {
 
         let half = total_shards / 2;
         for (index, bin) in shards {
-            let idx_usize = index as usize;
-            if idx_usize < half {
+            if index < half {
                 let shard_data = bin.as_slice();
 
-                let offset = idx_usize * SHARD_SIZE;
+                let offset = index * SHARD_SIZE;
                 // protect against going past original_size
                 let end = (offset + shard_data.len()).min(original_size);
                 combined[offset..end].copy_from_slice(&shard_data[..(end - offset)]);
@@ -90,5 +89,32 @@ impl ReedSolomonResource {
         }
 
         Ok(combined)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rs_roundtrip_multi_shard() {
+        // prepare data that spans 3 shards (last shard partial)
+        let len = SHARD_SIZE * 3 - 10;
+        let mut data = vec![0u8; len];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+
+        // set data_shards = recovery_shards = chunk_count = 3 for this test
+        let mut rs = ReedSolomonResource::new(3, 3).expect("new");
+        let shards = rs.encode_shards(&data).expect("encode");
+        assert_eq!(shards.len(), 6);
+
+        // drop one original shard and one recovery shard randomly
+        let mut kept: Vec<(usize, Vec<u8>)> =
+            shards.into_iter().enumerate().filter(|(i, _)| *i != 1 && *i != 4).map(|(_, v)| v).collect();
+        // total_shards = originals(3) + recovery(3)
+        let restored = rs.decode_shards(kept.drain(..).collect(), 6, len).expect("decode");
+        assert_eq!(restored, data);
     }
 }

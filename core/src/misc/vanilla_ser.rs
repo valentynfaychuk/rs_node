@@ -6,6 +6,7 @@
 /// - 5 => binary/atom: encode_varint(len) + raw bytes
 /// - 6 => list: encode_varint(len) + encoded elements
 /// - 7 => map: encode_varint(len) + sorted (by key) [key, value] encoded pairs
+///
 /// Variant:
 /// - 0 => single 0x00 byte
 /// - otherwise: first byte has sign (MSB, 1 bit) and length in bytes (7 bits),

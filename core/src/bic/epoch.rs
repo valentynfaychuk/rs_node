@@ -217,11 +217,9 @@ pub fn slash_trainer_verify(
 /// Return the subset of trainers whose corresponding bits are set in the bitmask
 pub fn unmask_trainers(trainers: &[[u8; 48]], mask: &Vec<bool>) -> Vec<[u8; 48]> {
     let mut res = Vec::new();
-    for i in 0..trainers.len() {
-        if let Some(&bit) = mask.get(i)
-            && bit
-        {
-            res.push(trainers[i]);
+    for (i, trainer) in trainers.iter().enumerate() {
+        if Some(true) == mask.get(i).copied() {
+            res.push(*trainer);
         }
     }
     res

@@ -36,7 +36,6 @@ impl Default for AppState {
 }
 
 impl AppState {
-
     fn now_ms() -> u64 {
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
     }
@@ -56,10 +55,14 @@ impl AppState {
             last_msg: None,
         });
         entry.last_seen_ms = Self::now_ms();
-        if let Some(k) = sk.into() && !k.is_empty() {
+        if let Some(k) = sk.into()
+            && !k.is_empty()
+        {
             entry.sk = Some(k);
         }
-        if let Some(m) = last_msg.into() && !m.is_empty() {
+        if let Some(m) = last_msg.into()
+            && !m.is_empty()
+        {
             entry.last_msg = Some(m);
         }
     }

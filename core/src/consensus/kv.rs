@@ -35,14 +35,14 @@ fn get_store_mut<F, R>(f: F) -> R
 where
     F: FnOnce(&mut KvCtx) -> R,
 {
-    CTX.with(|c| f(&mut *c.borrow_mut()))
+    CTX.with(|c| f(&mut c.borrow_mut()))
 }
 
 fn get_store<F, R>(f: F) -> R
 where
     F: FnOnce(&KvCtx) -> R,
 {
-    CTX.with(|c| f(&*c.borrow()))
+    CTX.with(|c| f(&c.borrow()))
 }
 
 fn ascii_i64(bytes: &[u8]) -> Option<i64> {
@@ -149,7 +149,7 @@ pub fn kv_clear(prefix: &str) -> usize {
 /// otherwise returns false. Page size defaults to BIC sol bloom size (65_536 bits) when None.
 pub fn kv_set_bit(key: &str, bit_idx: u32, bloom_size_opt: Option<u32>) -> bool {
     let bloom_size = bloom_size_opt.unwrap_or(65_536);
-    let byte_len = (bloom_size as usize + 7) / 8;
+    let byte_len = (bloom_size as usize).div_ceil(8);
     get_store_mut(|ctx| {
         let mut page = ctx.store.get(key).cloned().unwrap_or_else(|| vec![0u8; byte_len]);
         let byte_i = (bit_idx / 8) as usize;

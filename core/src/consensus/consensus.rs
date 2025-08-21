@@ -73,6 +73,7 @@ impl Consensus {
     /// Validate this consensus vs chain state:
     /// - Entry must exist and not be in the future vs current temporal_height
     /// - Aggregate signature must verify against the set of trainers unmasked by `mask`
+    ///
     /// On success, sets self.score = Some(score) and returns Ok(())
     pub fn validate_vs_chain(&mut self) -> Result<(), Error> {
         // Build message to sign: entry_hash || mutations_hash
@@ -85,10 +86,8 @@ impl Consensus {
         let Some(entry) = entry else { return Err(Error::InvalidEntry) };
 
         // Ensure entry height is not in the future
-        if let Some(cur_h) = get_chain_height().ok() {
-            if entry.header.height > cur_h {
-                return Err(Error::TooFarInFuture);
-            }
+        if let Ok(cur_h) = get_chain_height() && entry.header.height > cur_h {
+            return Err(Error::TooFarInFuture);
         }
 
         // Trainers

@@ -99,7 +99,7 @@ pub fn alphanumeric_hostname(input: &str) -> String {
 
 /// Safe extension: returns ".ext" where ext is alphanumeric-only, derived from the given path
 pub fn sext(path: &str) -> String {
-    let ext = Path::new(path).extension().and_then(|os| os.to_str()).map(|s| alphanumeric(s)).unwrap_or_default();
+    let ext = Path::new(path).extension().and_then(|os| os.to_str()).map(alphanumeric).unwrap_or_default();
     format!(".{}", ext)
 }
 
@@ -191,10 +191,8 @@ impl TermMap {
     {
         self.0
             .get(&Term::Atom(Atom::from(key)))
-            .map(TermExt::get_binary)
-            .flatten()
-            .map(|b| A::try_from(b).ok())
-            .flatten()
+            .and_then(TermExt::get_binary)
+            .and_then(|b| A::try_from(b).ok())
     }
 
     pub fn get_integer<I>(&self, key: &str) -> Option<I>
@@ -203,10 +201,8 @@ impl TermMap {
     {
         self.0
             .get(&Term::Atom(Atom::from(key)))
-            .map(TermExt::get_integer)
-            .flatten()
-            .map(|b| I::try_from(b).ok())
-            .flatten()
+            .and_then(TermExt::get_integer)
+            .and_then(|b| I::try_from(b).ok())
     }
 
     pub fn get_list(&self, key: &str) -> Option<&[Term]> {
@@ -219,7 +215,7 @@ impl TermMap {
 }
 
 pub fn bools_to_bitvec(mask: &[bool]) -> Vec<u8> {
-    let mut out = vec![0u8; (mask.len() + 7) / 8];
+    let mut out = vec![0u8; mask.len().div_ceil(8)];
     for (i, &b) in mask.iter().enumerate() {
         if b {
             out[i / 8] |= 1 << (7 - (i % 8));
@@ -249,3 +245,53 @@ pub fn bitvec_to_bools(bytes: Vec<u8>) -> Vec<bool> {
 //     }
 //     out
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hexdump_basic() {
+        let s = hexdump(&[0x41, 0x00, 0x7F]);
+        assert!(s.starts_with("00000000  "));
+        assert!(s.contains("41 00 7F"));
+        assert!(s.ends_with("A.."));
+    }
+
+    #[test]
+    fn string_helpers() {
+        assert_eq!(sbash("O'Reilly"), "'OReilly'");
+        assert_eq!(sbash(""), "");
+        assert!(is_ascii_clean("AZaz09_-!"));
+        assert!(!is_ascii_clean("hi🙂"));
+        assert_eq!(alphanumeric("Abc-123"), "Abc123");
+        assert!(is_alphanumeric("abc123"));
+        assert!(!is_alphanumeric("a_b"));
+        assert_eq!(ascii_dash_underscore("A-b_C!"), "A-b_C");
+        assert_eq!(alphanumeric_hostname("AbC-123_X"), "b-123");
+    }
+
+    #[test]
+    fn ext_and_urls() {
+        assert_eq!(sext("/tmp/file.tar.gz"), ".gz");
+        assert_eq!(sext("file"), ".");
+        assert_eq!(url("http://a/b/"), "http://a/b");
+        assert_eq!(url("http://a/b"), "http://a/b");
+        assert_eq!(url_with("http://a/b", "/c"), "http://a/b/c");
+        assert_eq!(url_to_ws("https://a", "/x"), "wss://a/x");
+        assert_eq!(url_to_ws("http://a", "/x"), "ws://a/x");
+        assert_eq!(url_to_ws("ws://a", "/x"), "ws://a/x");
+    }
+
+    #[test]
+    fn bitvec_roundtrip_prefix() {
+        let mask = vec![true, false, true, true, false, false, false, true, true];
+        let bytes = bools_to_bitvec(&mask);
+        assert_eq!(bytes.len(), 2);
+        let bools = bitvec_to_bools(bytes.clone());
+        assert_eq!(&bools[..mask.len()], &mask[..]);
+        for b in &bools[mask.len()..8 * bytes.len()] {
+            assert!(!*b);
+        }
+    }
+}
