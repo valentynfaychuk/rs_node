@@ -206,7 +206,8 @@ impl Solution {
 pub fn verify_hash(epoch: u32, hash: &[u8; 32]) -> bool {
     if epoch >= 244 {
         hash[0] == 0 && hash[1] == 0 && hash[2] == 0
-    } else if epoch >= 1 { // there may be separate case for 156
+    } else if epoch >= 1 {
+        // there may be separate case for 156
         hash[0] == 0 && hash[1] == 0
     } else {
         hash[0] == 0
@@ -228,7 +229,9 @@ pub fn cache_mark_valid(sol: &[u8]) {
 }
 
 fn verify_cache(epoch: u32, sol: &[u8], _use_upow1: bool) -> bool {
-    if let Some(is_valid) = SOL_VERIFY_CACHE.lock().unwrap().get(sol).copied() && is_valid {
+    if let Some(is_valid) = SOL_VERIFY_CACHE.lock().unwrap().get(sol).copied()
+        && is_valid
+    {
         // delete like :ets.delete
         SOL_VERIFY_CACHE.lock().unwrap().remove(sol);
         return true;

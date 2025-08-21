@@ -170,7 +170,10 @@ fn is_ascii_eq(bytes: &[u8], s: &str) -> bool {
 
 pub fn valid_pk(pk: &[u8]) -> bool {
     // accept burn address or any valid BLS public key
-    if pk.len() == 48 && let Ok(arr) = <&[u8; 48]>::try_from(pk) && arr == &crate::bic::coin::burn_address() {
+    if pk.len() == 48
+        && let Ok(arr) = <&[u8; 48]>::try_from(pk)
+        && arr == &crate::bic::coin::burn_address()
+    {
         return true;
     }
     bls12_381::validate_public_key(pk).is_ok()
@@ -334,7 +337,11 @@ pub fn chain_valid(txu: &TxU) -> bool {
 
     // hasSol / epochSolValid
     let mut epoch_sol_valid = true;
-    if let Some(action) = txu.tx.actions.first() && action.function == "submit_sol" && let Some(first_arg) = action.args.first() && first_arg.len() >= 4 {
+    if let Some(action) = txu.tx.actions.first()
+        && action.function == "submit_sol"
+        && let Some(first_arg) = action.args.first()
+        && first_arg.len() >= 4
+    {
         let sol_epoch = u32::from_le_bytes([first_arg[0], first_arg[1], first_arg[2], first_arg[3]]);
         epoch_sol_valid = crate::consensus::chain_epoch() as u32 == sol_epoch;
     }

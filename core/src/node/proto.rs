@@ -252,6 +252,40 @@ impl Ping {
         Ok(Self::new(temporal, rooted))
     }
 
+    pub fn to_msg_v2(&self) -> Result<MessageV2, Error> {
+        // create a MessageV2 from this Ping
+        let compressed_payload = self.to_compressed_etf_bin()?;
+
+        // get signing keys from config
+        let pk = config::trainer_pk();
+        let sk_seed = config::trainer_sk_seed();
+
+        // create message metadata
+        let ts_nano = get_unix_nanos_now() as u64;
+
+        let original_size = compressed_payload.len() as u32;
+        let version = "1.1.2".to_string();
+
+        // for single shard (no Reed-Solomon needed)
+        let shard_index = 0;
+        let shard_total = 2; // total shards * 2 as per protocol
+
+        // create message to sign: compressed payload
+        let signature =
+            bls::sign(&sk_seed, &compressed_payload, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
+
+        Ok(MessageV2 {
+            version,
+            pk,
+            signature,
+            shard_index,
+            shard_total,
+            ts_nano,
+            original_size,
+            payload: compressed_payload,
+        })
+    }
+
     /// Convert Ping to ETF binary format
     pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
         let mut m = HashMap::new();

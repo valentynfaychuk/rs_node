@@ -6,6 +6,11 @@ pub const QUORUM_SINGLE: usize = 1; // quorum size for single shard
 
 // node configuration getters (hardcoded for now)
 
+struct ClientConfig {
+    //pub directory: ,
+    pub sk_seed: [u8; 32],
+}
+
 /// Root work folder, DBs will be placed under this path
 pub fn work_dir() -> &'static str {
     "run.local"
@@ -21,6 +26,7 @@ pub fn trainer_pk() -> [u8; 48] {
 
 /// Trainer secret seed used for BLS signing, hardcoded for now (32 bytes)
 pub fn trainer_sk_seed() -> [u8; 32] {
+    // owner_sk_seed
     // NOTE: replace with real secret handling, this is a placeholder
     [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,

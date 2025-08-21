@@ -3,18 +3,18 @@ use eetf::{Atom, Binary, List, Term};
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub fn get_unix_secs_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now().duration_since(UNIX_EPOCH).as_ref().map(Duration::as_secs).unwrap_or(0)
 }
 
 pub fn get_unix_millis_now() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
+    SystemTime::now().duration_since(UNIX_EPOCH).as_ref().map(Duration::as_millis).unwrap_or(0)
 }
 
 pub fn get_unix_nanos_now() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    SystemTime::now().duration_since(UNIX_EPOCH).as_ref().map(Duration::as_nanos).unwrap_or(0)
 }
 
 /// Produce a hex dump similar to `hexdump -C` for a binary slice.
@@ -189,20 +189,14 @@ impl TermMap {
     where
         A: TryFrom<&'a [u8]>,
     {
-        self.0
-            .get(&Term::Atom(Atom::from(key)))
-            .and_then(TermExt::get_binary)
-            .and_then(|b| A::try_from(b).ok())
+        self.0.get(&Term::Atom(Atom::from(key))).and_then(TermExt::get_binary).and_then(|b| A::try_from(b).ok())
     }
 
     pub fn get_integer<I>(&self, key: &str) -> Option<I>
     where
         I: TryFrom<i128>,
     {
-        self.0
-            .get(&Term::Atom(Atom::from(key)))
-            .and_then(TermExt::get_integer)
-            .and_then(|b| I::try_from(b).ok())
+        self.0.get(&Term::Atom(Atom::from(key))).and_then(TermExt::get_integer).and_then(|b| I::try_from(b).ok())
     }
 
     pub fn get_list(&self, key: &str) -> Option<&[Term]> {

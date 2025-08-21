@@ -86,7 +86,9 @@ impl Consensus {
         let Some(entry) = entry else { return Err(Error::InvalidEntry) };
 
         // Ensure entry height is not in the future
-        if let Ok(cur_h) = get_chain_height() && entry.header.height > cur_h {
+        if let Ok(cur_h) = get_chain_height()
+            && entry.header.height > cur_h
+        {
             return Err(Error::TooFarInFuture);
         }
 

@@ -8,9 +8,9 @@ use tokio::sync::Mutex;
 // does not poison mutex on panic
 
 use super::msg_v2::MessageV2;
-use crate::misc::bls12_381;
 use crate::misc::reed_solomon;
 use crate::misc::reed_solomon::ReedSolomonResource;
+use crate::misc::{blake3, bls12_381};
 
 type ReassemblySyncMap = Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>;
 
@@ -67,10 +67,50 @@ impl Default for ReedSolomonReassembler {
     }
 }
 
-
 impl ReedSolomonReassembler {
     pub fn new() -> Self {
         Self { reorg: Arc::new(Mutex::new(HashMap::new())) }
+    }
+
+    /// Create a signed MessageV2 from given payload and header fields.
+    ///
+    /// Reference: node.local/ex encrypt_message_v2 signs Blake3(pk || payload) with DST_NODE.
+    pub fn build_message_v2(
+        payload: Vec<u8>,
+        shard_index: u16,
+        shard_total: u16,
+        original_size: u32,
+        ts_nano: u64,
+        version: &str,
+    ) -> Result<MessageV2, Error> {
+        let pk = crate::config::trainer_pk();
+        let sk_seed = crate::config::trainer_sk_seed();
+
+        // sign Blake3(pk || payload) per reference implementation
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&pk);
+        hasher.update(&payload);
+        let msg_hash = hasher.finalize();
+
+        let signature = bls12_381::sign(&sk_seed, &msg_hash, DST_NODE)?;
+
+        Ok(MessageV2 {
+            version: version.to_string(),
+            pk,
+            signature,
+            shard_index,
+            shard_total,
+            ts_nano,
+            original_size,
+            payload,
+        })
+    }
+
+    /// Convenience: build a single-shard MessageV2 (shard_total=2) using current time and payload length
+    pub fn build_single_shard_message_v2(payload: Vec<u8>, version: &str) -> Result<MessageV2, Error> {
+        let ts_nano = get_unix_nanos_now() as u64;
+        let original_size = payload.len() as u32;
+        Self::build_message_v2(payload, 0, 2, original_size, ts_nano, version)
     }
 
     /// This starts a timer that clears outdated reassemblies
@@ -154,13 +194,11 @@ impl ReedSolomonReassembler {
     }
 
     fn verify_msg_sig(key: &ReassemblyKey, signature: &[u8], payload: &[u8]) -> Result<(), Error> {
-        use crate::misc::blake3 as b3; // use more efficient blake3
-
         if signature.is_empty() {
             return Err(Error::NoSignature);
         }
 
-        let mut hasher = b3::Hasher::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(&key.pk);
         hasher.update(payload);
         let msg_hash = hasher.finalize();
