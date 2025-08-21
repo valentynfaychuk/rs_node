@@ -13,28 +13,7 @@ where
     type Error;
     /// Handle a message returning instructions for upper layers
     async fn handle(self) -> Result<Instruction, Self::Error>;
-}
-
-/// Result of handling an incoming message.
-#[derive(Debug)]
-pub enum Instruction {
-    Noop,
-    ReplyPong { ts_m: u128 },
-    ObservedPong { ts_m: u128, seen_time_ms: u128 },
-    ValidTxs { txs: Vec<Vec<u8>> },
-    Peers { ips: Vec<String> },
-    ReceivedSol { sol: Solution },
-    ReceivedEntry { entry: Entry },
-    AttestationBulk { bulk: AttestationBulk },
-    ConsensusesPacked { packed: Vec<u8> },
-    CatchupEntryReq { heights: Vec<u64> },
-    CatchupTriReq { heights: Vec<u64> },
-    CatchupBiReq { heights: Vec<u64> },
-    CatchupAttestationReq { hashes: Vec<Vec<u8>> },
-    SpecialBusiness { business: Vec<u8> },
-    SpecialBusinessReply { business: Vec<u8> },
-    SolicitEntry { hash: Vec<u8> },
-    SolicitEntry2,
+    //fn get_name(&self) -> &'static str;
 }
 
 #[async_trait::async_trait]

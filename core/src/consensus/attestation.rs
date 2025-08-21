@@ -2,13 +2,14 @@ use crate::consensus::agg_sig::DST_ATT;
 use crate::misc::bls12_381 as bls;
 use crate::misc::bls12_381::Error as BlsError;
 use crate::misc::utils::{TermExt, TermMap};
-use crate::node::handler::{HandleExt, Instruction};
-use crate::node::proto::ProtoExt;
+use crate::node::proto;
+use crate::node::proto::Proto;
 use eetf::DecodeError as EtfDecodeError;
 use eetf::EncodeError as EtfEncodeError;
 use eetf::{Atom, Binary, Term};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use tracing::{instrument, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -53,10 +54,14 @@ impl Debug for Attestation {
     }
 }
 
-impl ProtoExt for AttestationBulk {
-    type Error = Error;
+#[async_trait::async_trait]
+impl Proto for AttestationBulk {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
 
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
+    #[instrument(skip(map), name = "AttestationBulk::from_etf_map_validated")]
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, proto::Error> {
         let list = map.get_list("attestations_packed").ok_or(Error::Missing("attestations_packed"))?;
 
         let mut attestations = Vec::with_capacity(list.len());
@@ -67,19 +72,20 @@ impl ProtoExt for AttestationBulk {
 
         Ok(Self { attestations })
     }
-}
 
-#[async_trait::async_trait]
-impl HandleExt for AttestationBulk {
-    type Error = Error;
-
-    async fn handle(self) -> Result<Instruction, Self::Error> {
-        // TODO: Handle the attestation bulk
-        Ok(Instruction::Noop)
+    #[instrument(skip(self), name = "AttestationBulk::handle", err)]
+    async fn handle_inner(&self) -> Result<proto::Instruction, proto::Error> {
+        // TODO: handle the attestation bulk
+        Ok(proto::Instruction::Noop)
     }
 }
 
+impl AttestationBulk {
+    pub const NAME: &'static str = "attestation_bulk";
+}
+
 impl Attestation {
+    #[instrument(skip(bin), name = "Attestation::from_etf_bin", err)]
     pub fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
         let term = Term::decode(bin)?;
         let map = match term {
@@ -115,6 +121,7 @@ impl Attestation {
         })
     }
     /// Encode into an ETF map with deterministic field set
+    #[instrument(skip(self), name = "Attestation::to_etf_bin", err)]
     pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
         let mut m = HashMap::new();
         m.insert(Term::Atom(Atom::from("entry_hash")), Term::from(Binary { bytes: self.entry_hash.to_vec() }));
@@ -128,6 +135,7 @@ impl Attestation {
     }
 
     /// Validate sizes and signature with DST_ATT
+    #[instrument(skip(self), name = "Attestation::validate", err)]
     pub fn validate(&self) -> Result<(), Error> {
         let mut to_sign = [0u8; 64];
         to_sign[..32].copy_from_slice(&self.entry_hash);
@@ -136,8 +144,8 @@ impl Attestation {
         Ok(())
     }
 
-    /// Verify this attestation against an allowed set of trainers (public keys).
-    /// Returns Ok(()) only if signer is present in `trainers` and signature is valid.
+    /// Verify this attestation against an allowed set of trainers (public keys)
+    /// Returns Ok(()) only if signer is present in `trainers` and signature is valid
     pub fn validate_vs_trainers<TPk>(&self, trainers: &[TPk]) -> Result<(), Error>
     where
         TPk: AsRef<[u8]>,
@@ -149,8 +157,8 @@ impl Attestation {
         self.validate()
     }
 
-    /// Create an attestation from provided public/secret material.
-    /// NOTE: We intentionally do not read global env here. Caller supplies keys.
+    /// Create an attestation from provided public/secret material
+    /// NOTE: we intentionally do not read global env here, caller supplies keys
     pub fn sign_with(
         pk_g1_48: &[u8],
         sk_seed: &[u8],

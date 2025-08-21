@@ -1,7 +1,7 @@
 use crate::misc::blake3;
 use crate::misc::utils::TermMap;
-use crate::node::handler::{HandleExt, Instruction};
-use crate::node::proto::ProtoExt;
+use crate::node::proto;
+use crate::node::proto::Proto;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -59,26 +59,26 @@ pub enum Solution {
     V0(SolV0), // epoch < 1
 }
 
-impl ProtoExt for Solution {
-    type Error = Error;
-
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
-        let bin = map.get_binary("sol").ok_or(Error::Missing("sol"))?;
-        Solution::from_etf_validated(bin)
-    }
-}
-
 #[async_trait::async_trait]
-impl HandleExt for Solution {
-    type Error = Error;
+impl Proto for Solution {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
 
-    async fn handle(self) -> Result<Instruction, Self::Error> {
-        // Cache the solution
-        Ok(Instruction::Noop)
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, proto::Error> {
+        let bin = map.get_binary("sol").ok_or(Error::Missing("sol"))?;
+        Solution::from_etf_validated(bin).map_err(Into::into)
+    }
+
+    async fn handle_inner(&self) -> Result<proto::Instruction, proto::Error> {
+        // cache the solution
+        Ok(proto::Instruction::Noop)
     }
 }
 
 impl Solution {
+    pub const NAME: &'static str = "sol";
+
     pub fn from_etf_validated(bin: &[u8]) -> Result<Self, Error> {
         if Self::validate(&bin)? { Self::unpack(&bin) } else { Err(Error::InvalidSolSeedSize) }
     }
@@ -168,12 +168,12 @@ pub fn verify_hash(epoch: u32, hash: &[u8; 32]) -> bool {
 }
 
 fn vr_b3_stub() -> [u8; 32] {
-    // TODO: Provide cryptographically strong random 32 bytes if available.
-    // Stubbed to zeros to avoid introducing external dependencies.
+    // TODO: provide cryptographically strong random 32 bytes if available
+    // stubbed to zeros to avoid introducing external dependencies
     [0u8; 32]
 }
 
-// Minimalistic global cache emulating SOLVerifyCache ETS behavior.
+// minimalistic global cache emulating SOLVerifyCache ETS behavior
 static SOL_VERIFY_CACHE: Lazy<Mutex<HashMap<Vec<u8>, bool>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub fn cache_mark_valid(sol: &[u8]) {
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn unpack_v2() {
-        // Build minimal V2 buffer
+        // build minimal V2 buffer
         let epoch: u32 = 200;
         let mut buf = vec![];
         buf.extend_from_slice(&epoch.to_le_bytes());
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn parse_well_known_sol() {
-        // Solution was taken from here https://explorer.ama.one/network/tx/7q8WZu9a2YNcEwhbLGSrJt3aCWefHRMm8nC66sg9YzGd
+        // solution was taken from here https://explorer.ama.one/network/tx/7q8WZu9a2YNcEwhbLGSrJt3aCWefHRMm8nC66sg9YzGd
         let b58 = "9tvLYXHJMkJ9jFW42R8mZxzEtNmAm8J6gRVUHW2Rubxf5FoY8J8FXd2kaKd338B4uy57Tn3akZ4y6gaYe1Y1tCATcyR6w3rJGeFzL5aebmmExAGsdLPmzYK2CD5pYTTqbVhsQRGwMj2JxjpQHyppt3TY7XZVd1SuafinFKHe1hCXkxRWEAQnxXsBgzZmTDr7S9fnxBpVuBHxvgNefGGDVieD44cSA4LrCmeWA4WaUQby54g9jGhf53QdiQVCMWtaFwDUNnKTMZ1GG2cmNCHDDQqhpRQAqczzL4XqYmnzRF9TVZBEhPFgUnhAHu27FMhnCv8zqeg3ujrXvnX1SyGaBL7sJqG9FEcJbYLpisgnuwpYinUbDcg5tYgPZeBw28NYUvbc1xr9bnfSznxkHH5npZ2cA8uXq753FybTd5wd67FBHTKe7dW76JB2chxHK3Q2UGRf67oTb7wZC7SQtZt7bg9CWnLGe7bfYFKwR1U5dSzKroqkZ9Taunh4VswZCnEAhZJyFt5rw5fB8SnHQJgtnDomCdxbJUxByY9ekE4Jvr3DDhwtzf2YZuHMniE67TcNNoKTLsJxhJFGo1ct2mJv6iMPQXEYHqioQ7uzrLw42tzEQF6DQ9a6972duwfymfW98mueJpwNjsK8m52BdH7cEYqzAFj4nusZmm9vmjjKUy6aPD2MgMccyW18Dy8bpKrTCH9KTzGzeXHgHbNha44WPcCkGxqbMVWHdHVwSVPD9mJqwJGvrKAba15EobNQAnCJGJy4McGaGsChMrQXXrzakLjTtKjkrmWSbPxcjwLiBzf7dvhWUmzFZuxSdMbDRj2zFqsMqLDgZTTFMGoqBrwiwEyj8pQHy9DCiSRQWbycT4DdsFTKVrfgFNvA1XvUaptjSXozLASYS9SgXdjBTNsmCUsHrkdwHVVzFN6MNUAhjv7yF6X8yCmUMwrG1DQgmmJ4ADrzSP73xA5wMEVy2TWqy3ms69rLdjC4cgqKYsUwZVUkvamLoppLBsVh95yVPJuutmdsYHqiTxs8dQ4ymdu8uKZ5tcdnRL2HfRU6Xdjo99ws4Bwe8Pmx1WHWRgg83YV9E2nsWfreaSYrW8UTz7bNsPsQtmxzvdKq1RdnfTJWgAv5EPN2ZL3jBdE7pfGgEzw98W8EpLZGWDZSFUrht8GFTzUrUVR75WXVqWJdRk5hpetE3H67MCS3ujMvr4W1cNzmheJoCDh5SbFXj49S2ftUYcD4BVdfX451sKkRwuEeofKJoGBL4p3rdo3izFyBdJvMY8GrLMxYrS9adAqXjiLt16KBm5xYo6BdXygsrZfs54dWJUhzVVturAuXLPKecn5SJCxKhUy9KYxCNZaLcqCBWYX76EFZoBt9uAPbPNUNUWWQc9JA4yTveJ7J1uUpv2Qfam57ozbPuF5JkteymMpwWLHbC3UsY35orLeHRVhpj15dqTPDkF1ASjDPXXDJgwmtBCzJ1j8UXYwnxojNTsXLkBMRx8PX2phef88SznTnZhKVyMujpczgbPCafRGBXYpmAisQ39tyreT6n1pveg5LoFjWr9jDDEdRwQCoiyzg3ZSSzrfgnqfBYSK1f6ktA5Xceg1fp3FFpV4Yc3uvnKXdgRnvtm6ZV5mDqHQUUr73r1HoiK4y52THc6NvqpkosrZJsiAKf1eXHF8Rbjz6MD1ZxN7mAVnc4YYyPJgKrhuijF8WTrHx9WdNFzZBSJLC2J";
         let bin = bs58::decode(b58).into_vec().unwrap();
         let sol = Solution::from_etf_validated(&bin).unwrap();

@@ -1,8 +1,6 @@
-use crate::misc::utils::get_unix_secs_now;
 use once_cell::sync::OnceCell;
 use std::borrow::Cow;
-use tokio::fs;
-use tokio::fs::create_dir_all;
+use tokio::fs::{OpenOptions, create_dir_all};
 use tokio::io::AsyncWriteExt;
 
 static ARCHIVER_DIR: OnceCell<String> = OnceCell::new();
@@ -36,13 +34,13 @@ pub async fn store<'a>(
     let base = ARCHIVER_DIR.get().ok_or(Error::OnceCell("archiver_dir_get"))?;
 
     let path = if subdir.as_ref().is_empty() {
-        format!("{}/{}-{}", base, get_unix_secs_now(), name.as_ref())
+        format!("{}/{}", base, name.as_ref())
     } else {
         create_dir_all(&format!("{}/{}", base, subdir.as_ref())).await?;
-        format!("{}/{}/{}-{}", base, subdir.as_ref(), get_unix_secs_now(), name.as_ref())
+        format!("{}/{}/{}", base, subdir.as_ref(), name.as_ref())
     };
 
-    let mut file = fs::OpenOptions::new().create(true).append(true).open(&path).await?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path).await?;
     file.write_all(&bin).await?;
     file.flush().await?;
 

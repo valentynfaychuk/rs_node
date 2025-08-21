@@ -59,7 +59,7 @@ pub fn circulating_without_burn(epoch: u64) -> u64 {
     rec(epoch, 0)
 }
 
-/// Trait to inject a burn meter, mirroring Elixir's BIC.Coin.burn_balance()
+/// Trait to inject a burn meter
 pub trait BurnMeter {
     fn burn_balance(&self) -> u64;
 }
@@ -89,7 +89,7 @@ pub enum EpochCall {
         malicious_pk: [u8; 48],
         signature: Vec<u8>,
         mask: Vec<bool>,
-        // Note: In Elixir, trainers are pulled from KV; here we accept them optionally.
+        // note: in Elixir, trainers are pulled from KV; here we accept them optionally
         trainers: Option<Vec<[u8; 48]>>,
     },
 }
@@ -114,7 +114,7 @@ impl Epoch {
         let _segments = crate::bic::sol_bloom::segs(&hash);
         // TODO: for each segment: kv_set_bit("bic:epoch:solbloom:{page}", bit_offset)
 
-        // Unpack and verify epoch
+        // unpack and verify epoch
         let parsed = Solution::unpack(sol_bytes).map_err(|_| EpochError::InvalidSol)?;
         let (epoch, pk, pop) = match parsed {
             sol::Solution::V2(v2) => (v2.epoch as u64, v2.pk, v2.pop),
@@ -125,13 +125,13 @@ impl Epoch {
             return Err(EpochError::InvalidEpoch);
         }
 
-        // Use cached verification
+        // use cached verification
         let valid = sol::verify_with_hash(sol_bytes, &hash).unwrap_or(false);
         if !valid {
             return Err(EpochError::InvalidSol);
         }
 
-        // Verify Proof-of-Possession: message is pk bytes
+        // verify Proof-of-Possession: message is pk bytes
         if bls12_381::verify(&pk, &pop, &pk, DST_POP).is_err() {
             return Err(EpochError::InvalidPop);
         }
@@ -173,7 +173,7 @@ impl Epoch {
             return Err(EpochError::InvalidTrainerPk);
         }
 
-        // Verify and threshold as in Elixir
+        // verify and threshold as in Elixir
         slash_trainer_verify(epoch, malicious_pk, &trainers, mask, signature)?;
 
         // TODO: persist removal into KV and update trainer set and height index
@@ -194,7 +194,7 @@ pub fn slash_trainer_verify(
     mask: &Vec<bool>,
     signature: &[u8],
 ) -> Result<(), EpochError> {
-    // Unmask trainers according to bit mask
+    // unmask trainers according to bit mask
     let signers = unmask_trainers(trainers, mask);
     let consensus_pct = if trainers.is_empty() { 0.0 } else { (signers.len() as f64) / (trainers.len() as f64) };
 
@@ -202,7 +202,7 @@ pub fn slash_trainer_verify(
         return Err(EpochError::InvalidAmountOfSignatures);
     }
 
-    // Aggregate public keys and verify signature on the motion message
+    // aggregate public keys and verify signature on the motion message
     let apk = bls12_381::aggregate_public_keys(signers.iter()).map_err(|_| EpochError::InvalidSignature)?;
 
     // msg = <<"slash_trainer", cur_epoch::32-little, malicious_pk::binary>>

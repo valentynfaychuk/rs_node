@@ -1,17 +1,17 @@
-use super::handler::HandleExt;
+use crate::bic::sol;
 use crate::bic::sol::Solution;
-use crate::consensus::DST_NODE;
+use crate::config;
 use crate::consensus::attestation::AttestationBulk;
 use crate::consensus::consensus::{get_chain_rooted_tip_entry, get_chain_tip_entry};
-use crate::consensus::entry::{Entry, EntryHeader};
+use crate::consensus::entry::{Entry, EntrySummary};
 use crate::consensus::tx;
+use crate::consensus::{DST_NODE, attestation, entry};
 use crate::metrics;
-use crate::misc::bls12_381 as bls;
 use crate::misc::reed_solomon::ReedSolomonResource;
-use crate::misc::utils::{TermExt, TermMap, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now, get_unix_nanos_now};
-use crate::node::handler::Instruction;
+use crate::misc::utils::{TermExt, TermMap, get_unix_millis_now, get_unix_nanos_now};
+use crate::misc::{bls12_381 as bls, reed_solomon};
+use crate::node::msg_v2;
 use crate::node::msg_v2::MessageV2;
-use crate::config;
 use eetf::convert::TryAsRef;
 use eetf::{Atom, Binary, DecodeError as EtfDecodeError, EncodeError as EtfEncodeError, List, Map, Term};
 use miniz_oxide::deflate::{CompressionLevel, compress_to_vec};
@@ -21,68 +21,30 @@ use std::io::Error as IoError;
 use tracing::{instrument, warn};
 
 /// Every object that has this trait must be convertible from an Erlang ETF
-/// binary representation and must be able to handle itself as a message
-pub trait ProtoExt
-where
-    Self: Sized + Into<Proto>,
-    Self::Error: Into<Error>,
-{
-    type Error;
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error>;
-}
-
-#[derive(Debug)]
-pub enum Proto {
-    Ping(Ping),
-    Pong(Pong),
-    WhoAreYou(WhoAreYou),
-    TxPool(TxPool),
-    Peers(Peers),
-    Sol(Solution),
-    Entry(Entry),
-    AttestationBulk(AttestationBulk),
-    ConsensusBulk(ConsensusBulk),
-    CatchupEntry(CatchupEntry),
-    CatchupTri(CatchupTri),
-    CatchupBi(CatchupBi),
-    CatchupAttestation(CatchupAttestation),
-    SpecialBusiness(SpecialBusiness),
-    SpecialBusinessReply(SpecialBusinessReply),
-    SolicitEntry(SolicitEntry),
-    SolicitEntry2(SolicitEntry2),
-}
-
-macro_rules! impl_from {
-    ($($ty:ty => $variant:ident),* $(,)?) => {
-        $(
-            impl From<$ty> for Proto {
-                fn from(v: $ty) -> Self {
-                    Proto::$variant(v)
-                }
+/// Binary representation and must be able to handle itself as a message
+#[async_trait::async_trait]
+pub trait Proto: Send + Sync {
+    fn get_name(&self) -> &'static str;
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Error>
+    where
+        Self: Sized;
+    /// Handle a message returning instructions for upper layers
+    #[instrument(skip(self), fields(proto = %self.get_name()), name = "Proto::handle")]
+    async fn handle(&self) -> Result<Instruction, Error> {
+        match self.handle_inner().await {
+            Ok(i) => {
+                metrics::inc_handled_counter_by_name(self.get_name());
+                Ok(i)
             }
-        )*
-    };
+            Err(e) => {
+                warn!("Error handling {}: {}", self.get_name(), e);
+                metrics::inc_handling_errors();
+                Err(e)
+            }
+        }
+    }
+    async fn handle_inner(&self) -> Result<Instruction, Error>;
 }
-
-impl_from!(
-    Ping => Ping,
-    Pong => Pong,
-    WhoAreYou => WhoAreYou,
-    TxPool => TxPool,
-    Peers => Peers,
-    Solution => Sol,
-    Entry => Entry,
-    AttestationBulk => AttestationBulk,
-    ConsensusBulk => ConsensusBulk,
-    CatchupEntry => CatchupEntry,
-    CatchupTri => CatchupTri,
-    CatchupBi => CatchupBi,
-    CatchupAttestation => CatchupAttestation,
-    SpecialBusiness => SpecialBusiness,
-    SpecialBusinessReply => SpecialBusinessReply,
-    SolicitEntry => SolicitEntry,
-    SolicitEntry2 => SolicitEntry2,
-);
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -93,23 +55,21 @@ pub enum Error {
     #[error(transparent)]
     EtfEncode(#[from] EtfEncodeError),
     #[error(transparent)]
-    Tx(#[from] crate::consensus::tx::Error),
+    Tx(#[from] tx::Error),
     #[error(transparent)]
-    Entry(#[from] crate::consensus::entry::Error),
+    Entry(#[from] entry::Error),
     #[error(transparent)]
-    Sol(#[from] crate::bic::sol::Error),
+    Sol(#[from] sol::Error),
     #[error(transparent)]
-    Att(#[from] crate::consensus::attestation::Error),
+    Att(#[from] attestation::Error),
     #[error(transparent)]
-    ReedSolomon(#[from] crate::misc::reed_solomon::Error),
+    ReedSolomon(#[from] reed_solomon::Error),
     #[error(transparent)]
-    MsgV2(#[from] crate::node::msg_v2::Error),
+    MsgV2(#[from] msg_v2::Error),
     #[error("failed to decompress: {0}")]
     Decompress(DecompressError),
-    #[error("missing required field: {0}")]
-    Missing(&'static str),
-    #[error("wrong type, expected: {0}")]
-    WrongType(&'static str),
+    #[error("bad etf: {0}")]
+    BadEtf(&'static str),
 }
 
 impl From<DecompressError> for Error {
@@ -118,86 +78,61 @@ impl From<DecompressError> for Error {
     }
 }
 
-impl Proto {
-    #[instrument(skip(bin), name = "Proto::from_etf_validated")]
-    pub fn from_etf_validated(bin: &[u8]) -> Result<Proto, Error> {
-        Self::from_etf_validated_inner(bin).map_err(|e| {
-            crate::metrics::inc_parsing_and_validation_errors();
-            e
-        })
-    }
+/// Result of handling an incoming message.
+#[derive(Debug)]
+pub enum Instruction {
+    Noop,
+    ReplyPong { ts_m: u128 },
+    ObservedPong { ts_m: u128, seen_time_ms: u128 },
+    ValidTxs { txs: Vec<Vec<u8>> },
+    Peers { ips: Vec<String> },
+    ReceivedSol { sol: Solution },
+    ReceivedEntry { entry: Entry },
+    AttestationBulk { bulk: AttestationBulk },
+    ConsensusesPacked { packed: Vec<u8> },
+    CatchupEntryReq { heights: Vec<u64> },
+    CatchupTriReq { heights: Vec<u64> },
+    CatchupBiReq { heights: Vec<u64> },
+    CatchupAttestationReq { hashes: Vec<Vec<u8>> },
+    SpecialBusiness { business: Vec<u8> },
+    SpecialBusinessReply { business: Vec<u8> },
+    SolicitEntry { hash: Vec<u8> },
+    SolicitEntry2,
+}
 
-    pub fn from_etf_validated_inner(bin: &[u8]) -> Result<Proto, Error> {
-        let decompressed = decompress_to_vec(bin)?;
-        //let term = Term::decode(decompressed.as_slice())?; // decode ETF
-        let term = Term::decode(&decompressed[..])?;
-        let map = term.get_term_map().ok_or(Error::WrongType("map"))?;
+/// Also does the validation
+#[instrument(skip(bin), name = "Proto::from_etf_validated")]
+pub fn from_etf_bin(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
+    from_etf_bin_inner(bin).map_err(|error| {
+        metrics::inc_parsing_and_validation_errors();
+        error
+    })
+}
 
-        // `op` determines the variant.
-        let op_atom = map.get_atom("op").ok_or(Error::Missing("op"))?;
-        match op_atom.name.as_str() {
-            "pong" => Pong::from_etf_map_validated(map).map(Into::into),
-            "ping" => Ping::from_etf_map_validated(map).map(Into::into),
-            "entry" => Entry::from_etf_map_validated(map).map(Into::into).map_err(Into::into),
-            "attestation_bulk" => AttestationBulk::from_etf_map_validated(map).map(Into::into).map_err(Into::into),
-            "sol" => Solution::from_etf_map_validated(map).map(Into::into).map_err(Into::into),
-            "txpool" => TxPool::from_etf_map_validated(map).map(Into::into),
-            "peers" => Peers::from_etf_map_validated(map).map(Into::into),
-            // Implement following later
-            "who_are_you" => Ok(Proto::WhoAreYou(WhoAreYou {})),
-            "solicit_entry2" => Ok(Proto::SolicitEntry2(SolicitEntry2 {})),
-            _ => {
-                warn!("Unknown operation: {}", op_atom.name);
-                crate::metrics::inc_unknown_proto();
-                Err(Error::WrongType("op"))
-            }
+fn from_etf_bin_inner(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
+    let decompressed = decompress_to_vec(bin)?;
+    //let term = Term::decode(decompressed.as_slice())?; // decode ETF
+    let term = Term::decode(&decompressed[..])?;
+    let map = term.get_term_map().ok_or(Error::BadEtf("map"))?;
+
+    // `op` determines the variant
+    let op_atom = map.get_atom("op").ok_or(Error::BadEtf("op"))?;
+    let proto: Box<dyn Proto> = match op_atom.name.as_str() {
+        Ping::NAME => Box::new(Ping::from_etf_map_validated(map)?),
+        Pong::NAME => Box::new(Pong::from_etf_map_validated(map)?),
+        Entry::NAME => Box::new(Entry::from_etf_map_validated(map)?),
+        AttestationBulk::NAME => Box::new(AttestationBulk::from_etf_map_validated(map)?),
+        Solution::NAME => Box::new(Solution::from_etf_map_validated(map)?),
+        TxPool::NAME => Box::new(TxPool::from_etf_map_validated(map)?),
+        Peers::NAME => Box::new(Peers::from_etf_map_validated(map)?),
+        _ => {
+            warn!("Unknown operation: {}", op_atom.name);
+            metrics::inc_unknown_proto();
+            return Err(Error::BadEtf("op"));
         }
-    }
+    };
 
-    pub fn get_name(&self) -> &'static str {
-        match self {
-            Proto::Ping(_) => "ping",
-            Proto::Pong(_) => "pong",
-            Proto::WhoAreYou(_) => "who_are_you",
-            Proto::TxPool(_) => "txpool",
-            Proto::Peers(_) => "peers",
-            Proto::Sol(_) => "sol",
-            Proto::Entry(_) => "entry",
-            Proto::AttestationBulk(_) => "attestation_bulk",
-            Proto::ConsensusBulk(_) => "consensus_bulk",
-            Proto::CatchupEntry(_) => "catchup_entry",
-            Proto::CatchupTri(_) => "catchup_tri",
-            Proto::CatchupBi(_) => "catchup_bi",
-            Proto::CatchupAttestation(_) => "catchup_attestation",
-            Proto::SpecialBusiness(_) => "special_business",
-            Proto::SpecialBusinessReply(_) => "special_business_reply",
-            Proto::SolicitEntry(_) => "solicit_entry",
-            Proto::SolicitEntry2(_) => "solicit_entry2",
-        }
-    }
-    #[instrument(skip(self), name = "Proto::handle")]
-    pub async fn handle(self) -> Result<Instruction, Error> {
-        Self::handle_inner(self).await.map_err(|e| {
-            crate::metrics::inc_handling_errors();
-            e
-        })
-    }
-
-    pub async fn handle_inner(self) -> Result<Instruction, Error> {
-        // Track metrics for this message type
-        metrics::inc_handled_counter_by_name(self.get_name());
-
-        match self {
-            Proto::Ping(ping) => ping.handle().await,
-            Proto::Pong(pong) => pong.handle().await,
-            Proto::TxPool(tx_pool) => tx_pool.handle().await,
-            Proto::Peers(peers) => peers.handle().await,
-            Proto::Sol(sol) => sol.handle().await.map_err(Into::into),
-            Proto::Entry(entry) => entry.handle().await.map_err(Into::into),
-            Proto::AttestationBulk(att_bulk) => att_bulk.handle().await.map_err(Into::into),
-            _ => Ok(Instruction::Noop),
-        }
-    }
+    Ok(proto)
 }
 
 #[derive(Debug)]
@@ -205,20 +140,6 @@ pub struct Ping {
     pub temporal: EntrySummary,
     pub rooted: EntrySummary,
     pub ts_m: u128,
-}
-
-/// Shared summary of an entry’s tip.
-#[derive(Debug)]
-pub struct EntrySummary {
-    pub header: EntryHeader,
-    pub signature: [u8; 96],
-    pub mask: Option<Vec<bool>>,
-}
-
-impl From<Entry> for EntrySummary {
-    fn from(entry: Entry) -> Self {
-        Self { header: entry.header, signature: entry.signature, mask: entry.mask }
-    }
 }
 
 #[derive(Debug)]
@@ -283,21 +204,27 @@ pub struct SolicitEntry {
 #[derive(Debug)]
 pub struct SolicitEntry2;
 
-impl ProtoExt for Ping {
-    type Error = Error;
-
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
-        let temporal_term = map.get_term_map("temporal").ok_or(Error::Missing("temporal"))?;
-        let rooted_term = map.get_term_map("rooted").ok_or(Error::Missing("rooted"))?;
+#[async_trait::async_trait]
+impl Proto for Ping {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
+        let temporal_term = map.get_term_map("temporal").ok_or(Error::BadEtf("temporal"))?;
+        let rooted_term = map.get_term_map("rooted").ok_or(Error::BadEtf("rooted"))?;
         let temporal = EntrySummary::from_etf_term(&temporal_term)?;
         let rooted = EntrySummary::from_etf_term(&rooted_term)?;
-        // TODO: validate temporal/rooted signatures and update peer shared secret; broadcast peers
-        let ts_m = map.get_integer("ts_m").ok_or(Error::Missing("ts_m"))?;
+        // TODO: validate temporal/rooted signatures and update peer shared secret, broadcast peers
+        let ts_m = map.get_integer("ts_m").ok_or(Error::BadEtf("ts_m"))?;
         Ok(Self { temporal, rooted, ts_m })
+    }
+    async fn handle_inner(&self) -> Result<Instruction, Error> {
+        Ok(Instruction::ReplyPong { ts_m: self.ts_m })
     }
 }
 
 impl Ping {
+    pub const NAME: &'static str = "ping";
     /// Create a new Ping with current timestamp
     pub fn new(temporal: EntrySummary, rooted: EntrySummary) -> Self {
         let ts_m = get_unix_millis_now();
@@ -305,19 +232,19 @@ impl Ping {
         Self { temporal, rooted, ts_m }
     }
 
-    /// Assemble Ping from current temporal and rooted tips stored in RocksDB.
-    /// Equivalent to Elixir NodeProto.ping/0: takes only header, signature, mask for each tip.
+    /// Assemble Ping from current temporal and rooted tips stored in RocksDB
+    /// Takes only header, signature, mask for each tip
     pub fn from_current_tips() -> Result<Self, Error> {
-        // Temporal summary
+        // temporal summary
         let temporal = match get_chain_tip_entry() {
             Ok(Some(entry)) => entry.into(),
-            _ => return Err(Error::Missing("temporal_tip")),
+            _ => return Err(Error::BadEtf("temporal_tip")),
         };
 
-        // Rooted summary
+        // rooted summary
         let rooted = match get_chain_rooted_tip_entry() {
             Ok(Some(entry)) => entry.into(),
-            _ => return Err(Error::Missing("rooted_tip")),
+            _ => return Err(Error::BadEtf("rooted_tip")),
         };
 
         Ok(Self::new(temporal, rooted))
@@ -348,11 +275,11 @@ impl Ping {
     pub fn to_message_v2(&self) -> Result<MessageV2, Error> {
         let compressed_payload = self.to_compressed_etf_bin()?;
 
-        // Get signing keys from config
+        // get signing keys from config
         let pk = config::trainer_pk();
         let sk_seed = config::trainer_sk_seed();
 
-        // Create message metadata
+        // create message metadata
         let ts_nano = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -361,13 +288,13 @@ impl Ping {
         let original_size = compressed_payload.len() as u32;
         let version = "1.1.2".to_string();
 
-        // For single shard (no Reed-Solomon needed)
+        // for single shard (no Reed-Solomon needed)
         let shard_index = 0;
-        let shard_total = 2; // Total shards * 2 as per protocol
+        let shard_total = 2; // total shards * 2 as per protocol
 
-        // Create message to sign: compressed payload
+        // create message to sign: compressed payload
         let signature =
-            bls::sign(&sk_seed, &compressed_payload, DST_NODE).map_err(|_| Error::WrongType("signing_failed"))?;
+            bls::sign(&sk_seed, &compressed_payload, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
 
         Ok(MessageV2 {
             version,
@@ -384,24 +311,24 @@ impl Ping {
     /// Create multiple signed MessageV2 packets with Reed-Solomon sharding for large payloads
     pub fn to_message_v2_sharded(&self) -> Result<Vec<Vec<u8>>, Error> {
         const MAX_UDP_SIZE: usize = 1300; // ~1.3KB UDP limit
-        const HEADER_SIZE: usize = 167; // MessageV2 header size from protocol spec
+        const HEADER_SIZE: usize = 167; // messagev2 header size from protocol spec
 
         let compressed_payload = self.to_compressed_etf_bin()?;
 
-        // Check if we need sharding
+        // check if we need sharding
         let total_size = HEADER_SIZE + compressed_payload.len();
         if total_size <= MAX_UDP_SIZE {
-            // Single packet - no sharding needed
+            // single packet - no sharding needed
             let msg = self.to_message_v2()?;
             let packet: Vec<u8> = msg.try_into()?;
             return Ok(vec![packet]);
         }
 
-        // Need Reed-Solomon sharding
+        // need Reed-Solomon sharding
         let mut rs = ReedSolomonResource::new(4, 4)?; // 4 data + 4 recovery shards
         let shards = rs.encode_shards(&compressed_payload)?;
 
-        // Get signing keys from config
+        // get signing keys from config
         let pk = config::trainer_pk();
         let sk_seed = config::trainer_sk_seed();
 
@@ -409,15 +336,14 @@ impl Ping {
 
         let original_size = compressed_payload.len() as u32;
         let version = "1.1.2".to_string();
-        let total_shards = (shards.len() * 2) as u16; // Total shards * 2 as per protocol
+        let total_shards = (shards.len() * 2) as u16; // total shards * 2 as per protocol
 
         let mut packets = Vec::new();
 
-        // Create a MessageV2 for each shard
+        // create a MessageV2 for each shard
         for (shard_index, shard_data) in shards {
-            // Sign the shard data
-            let signature =
-                bls::sign(&sk_seed, &shard_data, DST_NODE).map_err(|_| Error::WrongType("signing_failed"))?;
+            // sign the shard data
+            let signature = bls::sign(&sk_seed, &shard_data, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
 
             let msg = MessageV2 {
                 version: version.clone(),
@@ -438,71 +364,71 @@ impl Ping {
     }
 }
 
-impl EntrySummary {
-    /// Helper that reads an EntrySummary from an ETF term.
-    fn from_etf_term(map: &TermMap) -> Result<Self, Error> {
-        let header_bin: Vec<u8> = map.get_binary("header").ok_or(Error::Missing("header"))?;
-        let signature = map.get_binary("signature").ok_or(Error::Missing("signature"))?;
-        let mask = map.get_binary("mask").map(bitvec_to_bools);
-        let header = EntryHeader::from_etf_bin(&header_bin).map_err(|_| Error::WrongType("header"))?;
-        Ok(Self { header, signature, mask })
+#[async_trait::async_trait]
+impl Proto for Pong {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
     }
 
-    /// Convert EntrySummary to ETF term for encoding
-    pub fn to_etf_term(&self) -> Result<Term, Error> {
-        let mut m = HashMap::new();
-        m.insert(Term::Atom(Atom::from("header")), Term::from(Binary { bytes: self.header.to_etf_bin()? }));
-        m.insert(Term::Atom(Atom::from("signature")), Term::from(Binary { bytes: self.signature.to_vec() }));
-        if let Some(mask) = &self.mask {
-            m.insert(Term::Atom(Atom::from("mask")), Term::from(Binary { bytes: bools_to_bitvec(mask) }));
-        }
-        Ok(Term::from(Map { map: m }))
-    }
-}
-
-impl ProtoExt for Pong {
-    type Error = Error;
-
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
-        let ts_m = map.get_integer("ts_m").ok_or(Error::Missing("ts_m"))?;
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
+        let ts_m = map.get_integer("ts_m").ok_or(Error::BadEtf("ts_m"))?;
         let seen_time_ms = get_unix_millis_now();
         // check what else must be validated
         Ok(Self { ts_m, seen_time_ms })
     }
+
+    async fn handle_inner(&self) -> Result<Instruction, Error> {
+        // TODO: update ETS-like peer table with latency now_ms - p.ts_m
+        Ok(Instruction::Noop)
+    }
 }
 
-impl ProtoExt for TxPool {
-    type Error = Error;
+impl Pong {
+    pub const NAME: &'static str = "pong";
+}
 
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
-        let txs = map.get_binary("txs_packed").ok_or(Error::Missing("txs_packed"))?;
+#[async_trait::async_trait]
+impl Proto for TxPool {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
+
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
+        let txs = map.get_binary("txs_packed").ok_or(Error::BadEtf("txs_packed"))?;
         let valid_txs = TxPool::get_valid_txs(txs)?;
         Ok(Self { valid_txs })
+    }
+
+    async fn handle_inner(&self) -> Result<Instruction, Error> {
+        // TODO: update ETS-like tx pool with valid_txs
+        Ok(Instruction::Noop)
     }
 }
 
 impl TxPool {
+    pub const NAME: &'static str = "txpool";
+
     fn get_valid_txs(txs_packed: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
         let term = Term::decode(txs_packed)?;
 
         let list = if let Some(l) = TryAsRef::<List>::try_as_ref(&term) {
             &l.elements
         } else {
-            return Err(Error::WrongType("txs_packed must be list"));
+            return Err(Error::BadEtf("txs_packed must be list"));
         };
 
         let mut good: Vec<Vec<u8>> = Vec::with_capacity(list.len());
 
         for t in list {
-            // each item must be a binary()
+            // each item must be a binary
             let bin = if let Some(b) = TryAsRef::<Binary>::try_as_ref(t) {
                 b.bytes.as_slice()
             } else {
-                // skip non-binary entries silently (Elixir code assumes binaries)
+                // skip non-binary entries silently
                 continue;
             };
 
-            // Validate basic tx rules; special-meeting context is false in gossip path
+            // validate basic tx rules, special-meeting context is false in gossip path
             if tx::validate(bin, false).is_ok() {
                 good.push(bin.to_vec());
             }
@@ -512,16 +438,28 @@ impl TxPool {
     }
 }
 
-impl ProtoExt for Peers {
-    type Error = Error;
+#[async_trait::async_trait]
+impl Proto for Peers {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
 
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
-        let list = map.get_list("ips").ok_or(Error::Missing("ips"))?;
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
+        let list = map.get_list("ips").ok_or(Error::BadEtf("ips"))?;
         let ips = list
             .iter()
             .map(|t| t.get_string().map(|s| s.to_string()))
             .collect::<Option<Vec<_>>>()
-            .ok_or(Error::WrongType("ips"))?;
+            .ok_or(Error::BadEtf("ips"))?;
         Ok(Self { ips })
     }
+
+    async fn handle_inner(&self) -> Result<Instruction, Error> {
+        // TODO: update ETS-like peer table with new IPs
+        Ok(Instruction::Noop)
+    }
+}
+
+impl Peers {
+    pub const NAME: &'static str = "peers";
 }

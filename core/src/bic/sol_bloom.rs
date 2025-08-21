@@ -1,6 +1,6 @@
-// This module provides bloom-related helpers: constants, FPR simulation,
-// hashing to indices using BLAKE3 split into little-endian 128-bit words,
-// and segment calculation (page, bit_offset).
+/// This module provides bloom-related helpers: constants, FPR simulation
+/// hashing to indices using BLAKE3 split into little-endian 128-bit words
+/// and segment calculation (page, bit_offset)
 #[allow(dead_code)]
 use blake3::Hasher;
 
@@ -50,7 +50,7 @@ pub fn segs_from_digest(digest: &[u8]) -> Vec<Seg> {
         .collect()
 }
 
-// Elixir-parity names
+// elixir-parity names
 #[inline]
 pub fn hash(bin: &[u8]) -> Vec<u64> {
     hash_to_indices(bin)
@@ -69,13 +69,13 @@ pub struct Seg {
 
 #[inline]
 fn indices_from_digest(digest: &[u8]) -> Vec<u64> {
-    // Elixir code iterates for <<word::little-128 <- digest>> and prepends to the list,
-    // resulting in the final order being reversed relative to chunk iteration.
-    // blake3::Hash is 32 bytes. That yields two little-endian u128 values.
-    // If length is not a multiple of 16, we take as many full 16-byte chunks as possible.
+    // elixir code iterates for <<word::little-128 <- digest>> and prepends to the list,
+    // resulting in the final order being reversed relative to chunk iteration
+    // blake3::Hash is 32 bytes. That yields two little-endian u128 values
+    // if length is not a multiple of 16, we take as many full 16-byte chunks as possible
     let mut out = Vec::new();
     for chunk in digest.chunks_exact(16) {
-        // Read little-endian 128-bit
+        // read little-endian 128-bit
         let mut le = [0u8; 16];
         le.copy_from_slice(chunk);
         let word = u128::from_le_bytes(le);
@@ -112,11 +112,11 @@ mod tests {
         let input = b"hello world";
         let indices = hash_to_indices(input);
         assert_eq!(indices.len(), 2); // 32-byte digest -> two u128 words
-        // Deterministic expectations computed with this implementation itself for stability
+        // deterministic expectations computed with this implementation itself for stability
         let digest = blake3::hash(input);
         let segs = segs_from_digest(digest.as_bytes());
         assert_eq!(segs.len(), 2);
-        // Validate that segs correspond to indices
+        // validate that segs correspond to indices
         let expected: Vec<Seg> = indices
             .iter()
             .copied()

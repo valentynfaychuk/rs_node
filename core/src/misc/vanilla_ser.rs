@@ -38,7 +38,7 @@ pub enum Error {
 }
 
 impl Value {
-    // Deterministic comparator roughly analogous to Elixir term ordering for common types used as keys.
+    /// Deterministic comparator roughly analogous to term ordering for common types used as keys
     fn cmp_keys(a: &Value, b: &Value) -> Ordering {
         use Value::*;
         let tag_order = |v: &Value| -> u8 {

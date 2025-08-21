@@ -5,19 +5,19 @@ use blake3;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-/// Compute execution cost in "cents" identical to Elixir logic:
+/// Compute execution cost in cents
 ///
-/// We return the integer value directly (assuming the caller treats it as cents).
+/// Returns integer cost in cents
 pub fn exec_cost_from_len(tx_encoded_len: usize) -> u64 {
     let bytes = tx_encoded_len + 32 + 96;
     let cost_units = 3 + (bytes / 256) * 3; // integer division
-    // Elixir: BIC.Coin.to_cents(3 + div(bytes, 256) * 3)
+    // cost in cents
     crate::bic::coin::to_cents(cost_units as u64)
 }
 
-/// Blake3-based deterministic seed, mirroring:
+/// Blake3-based deterministic seed
 ///
-/// Returns the 32-byte seed (little-endian interpretation is up to the caller where needed).
+/// Returns the 32-byte seed (little-endian interpretation is up to the caller where needed)
 pub fn seed_random(vr: &[u8], txhash: &[u8], action_index: &[u8], call_cnt: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(vr);
@@ -28,10 +28,9 @@ pub fn seed_random(vr: &[u8], txhash: &[u8], action_index: &[u8], call_cnt: &[u8
     *hash.as_bytes()
 }
 
-/// Extract a deterministic f64 from the first 8 bytes of the seed (little-endian),
+/// Extract a deterministic f64 from the first 8 bytes of the seed (little-endian)
 ///
-/// Note: Random bytes mapped to f64 may produce NaN or infinities; this mirrors Elixir’s
-/// direct binary-to-float interpretation and is intentional.
+/// Note: random bytes mapped to f64 may produce NaN or infinities
 pub fn seed_to_f64(seed: &[u8; 32]) -> f64 {
     let mut first8 = [0u8; 8];
     first8.copy_from_slice(&seed[0..8]);
@@ -52,7 +51,7 @@ pub fn call_txs_pre_parallel_build_sol_cache(
     let mut cache: HashMap<[u8; 32], bool> = HashMap::new();
 
     for txu in txus {
-        // Find a.submit_sol with at least one arg (sol binary)
+        // find a.submit_sol with at least one arg (sol binary)
         if let Some(action) = txu.tx.actions.first()
             && action.function == "submit_sol"
             && let Some(first_arg) = action.args.first()
@@ -71,12 +70,12 @@ pub fn call_txs_pre_parallel_build_sol_cache(
 // - call_exit(env)
 // - call_tx_actions(env, txu)
 
-/// Minimal WASM call stub to reflect Elixir BIC.Base.WASM.call/4 cross-dependency.
-/// This is a placeholder; real implementation requires a WASM runtime integration.
+/// Minimal WASM call stub for contract calls
+/// This is a placeholder; real implementation requires a WASM runtime integration
 pub mod wasm {
     #[derive(Default, Debug, Clone)]
     pub struct WasmCallResult {
-        /// Optional execution units used; mirrors Elixir using this to charge gas.
+        /// Optional execution units used to charge gas
         pub exec_used: Option<u64>,
     }
 
@@ -92,7 +91,7 @@ pub mod wasm {
     }
 }
 
-// Thread-local cache similar to Elixir's Process.put(SolVerifiedCache, ...)
+// thread-local cache
 thread_local! {
     static SOL_VERIFIED_CACHE: RefCell<HashMap<[u8; 32], bool>> = RefCell::new(HashMap::new());
 }
@@ -122,7 +121,7 @@ fn key_balance(pk: &[u8], symbol: &str) -> String {
 /// Note: This function does not handle VRF/epoch-dependent sol verification flags; the
 /// bic::sol::verify_with_hash handles epoch branches internally
 pub fn call_txs_pre_parallel(entry_signer: &[u8; 48], txus: &[TxU]) -> (Vec<Mutation>, Vec<Mutation>) {
-    // For each txu: set nonce and move exec cost from signer to entry_signer in AMA
+    // for each txu: set nonce and move exec cost from signer to entry_signer in AMA
     for txu in txus {
         // nonce
         let key_nonce = format!("bic:base:nonce:{}", pk_hex(&txu.tx.signer));
@@ -138,7 +137,7 @@ pub fn call_txs_pre_parallel(entry_signer: &[u8; 48], txus: &[TxU]) -> (Vec<Muta
         kv::kv_increment(&key_entry, exec_cost);
     }
 
-    // Build and store Sol verification cache
+    // build and store Sol verification cache
     let cache = call_txs_pre_parallel_build_sol_cache(txus);
     set_sol_verified_cache(cache);
 

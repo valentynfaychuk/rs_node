@@ -4,16 +4,17 @@ use crate::config::ENTRY_SIZE;
 use crate::consensus::tx::TxU;
 use crate::consensus::{fabric, tx};
 use crate::misc::bls12_381;
-use crate::misc::utils::{TermExt, TermMap, bitvec_to_bools, get_unix_millis_now};
+use crate::misc::utils::{TermExt, TermMap, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
 use crate::misc::{archiver, blake3};
-use crate::node::handler::{HandleExt, Instruction};
-use crate::node::proto::ProtoExt;
+use crate::node::proto;
+use crate::node::proto::Proto;
 use crate::{bic, consensus};
 use eetf::{Atom, BigInteger, Binary, Map, Term};
 use std::collections::HashMap;
 use std::fmt;
+// use tracing::{instrument, warn};
 
-const MAX_TXS: usize = 100; // Maximum number of transactions in an entry
+const MAX_TXS: usize = 100; // maximum number of transactions in an entry
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -25,18 +26,14 @@ pub enum Error {
     BinDecode(#[from] bincode::error::DecodeError),
     #[error(transparent)]
     BinEncode(#[from] bincode::error::EncodeError),
-    #[error("wrong term type: {0}")]
-    WrongType(&'static str),
-    #[error("missing field: {0}")]
-    Missing(&'static str),
-    #[error("too large")]
-    TooLarge,
+    #[error("invalid erlang etf: {0}")]
+    BadEtf(&'static str),
     #[error("invalid signature")]
-    InvalidSignature,
+    BadAggSignature,
     #[error("wrong epoch or unsupported aggregate signature path")]
-    WrongEpochOrUnsupportedAgg,
+    NoTrainers,
     #[error("txs_hash invalid")]
-    TxsHashInvalid,
+    BadTxsHash,
     #[error(transparent)]
     Tx(#[from] tx::Error),
     #[error(transparent)]
@@ -46,7 +43,45 @@ pub enum Error {
     #[error(transparent)]
     Archiver(#[from] archiver::Error),
     #[error(transparent)]
+    RocksDb(#[from] rocksdb::Error),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// Shared summary of an entry’s tip.
+#[derive(Debug)]
+pub struct EntrySummary {
+    pub header: EntryHeader,
+    pub signature: [u8; 96],
+    pub mask: Option<Vec<bool>>,
+}
+
+impl From<Entry> for EntrySummary {
+    fn from(entry: Entry) -> Self {
+        Self { header: entry.header, signature: entry.signature, mask: entry.mask }
+    }
+}
+
+impl EntrySummary {
+    /// Helper that reads an EntrySummary from an ETF term.
+    pub fn from_etf_term(map: &TermMap) -> Result<Self, Error> {
+        let header_bin: Vec<u8> = map.get_binary("header").ok_or(Error::BadEtf("header"))?;
+        let signature = map.get_binary("signature").ok_or(Error::BadEtf("signature"))?;
+        let mask = map.get_binary("mask").map(bitvec_to_bools);
+        let header = EntryHeader::from_etf_bin(&header_bin).map_err(|_| Error::BadEtf("header"))?;
+        Ok(Self { header, signature, mask })
+    }
+
+    /// Convert EntrySummary to ETF term for encoding
+    pub fn to_etf_term(&self) -> Result<Term, Error> {
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("header")), Term::from(Binary { bytes: self.header.to_etf_bin()? }));
+        m.insert(Term::Atom(Atom::from("signature")), Term::from(Binary { bytes: self.signature.to_vec() }));
+        if let Some(mask) = &self.mask {
+            m.insert(Term::Atom(Atom::from("mask")), Term::from(Binary { bytes: bools_to_bitvec(mask) }));
+        }
+        Ok(Term::from(Map { map: m }))
+    }
 }
 
 #[derive(bincode::Decode, bincode::Encode, Clone)]
@@ -55,8 +90,8 @@ pub struct EntryHeader {
     pub slot: u64,
     pub prev_slot: i64, // is negative 1 in genesis entry
     pub prev_hash: [u8; 32],
-    pub dr: [u8; 32], // Deterministic random value
-    pub vr: [u8; 96], // Verifiable random value
+    pub dr: [u8; 32], // deterministic random value
+    pub vr: [u8; 96], // verifiable random value
     pub signer: [u8; 48],
     pub txs_hash: [u8; 32],
 }
@@ -79,16 +114,16 @@ impl fmt::Debug for EntryHeader {
 impl EntryHeader {
     pub fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
         let term = Term::decode(bin).map_err(Error::EtfDecode)?;
-        let map = term.get_term_map().ok_or(Error::WrongType("entry-header-map"))?;
+        let map = term.get_term_map().ok_or(Error::BadEtf("entry-header-map"))?;
 
-        let height = map.get_integer("height").ok_or(Error::Missing("height"))?;
-        let slot = map.get_integer("slot").ok_or(Error::Missing("slot"))?;
-        let prev_slot = map.get_integer("prev_slot").ok_or(Error::Missing("prev_slot"))?;
-        let prev_hash = map.get_binary("prev_hash").ok_or(Error::Missing("prev_hash"))?;
-        let dr = map.get_binary("dr").ok_or(Error::Missing("dr"))?;
-        let vr = map.get_binary("vr").ok_or(Error::Missing("vr"))?;
-        let signer = map.get_binary("signer").ok_or(Error::Missing("signer"))?;
-        let txs_hash = map.get_binary("txs_hash").ok_or(Error::Missing("txs_hash"))?;
+        let height = map.get_integer("height").ok_or(Error::BadEtf("height"))?;
+        let slot = map.get_integer("slot").ok_or(Error::BadEtf("slot"))?;
+        let prev_slot = map.get_integer("prev_slot").ok_or(Error::BadEtf("prev_slot"))?;
+        let prev_hash = map.get_binary("prev_hash").ok_or(Error::BadEtf("prev_hash"))?;
+        let dr = map.get_binary("dr").ok_or(Error::BadEtf("dr"))?;
+        let vr = map.get_binary("vr").ok_or(Error::BadEtf("vr"))?;
+        let signer = map.get_binary("signer").ok_or(Error::BadEtf("signer"))?;
+        let txs_hash = map.get_binary("txs_hash").ok_or(Error::BadEtf("txs_hash"))?;
 
         Ok(EntryHeader { height, slot, prev_slot, prev_hash, dr, vr, signer, txs_hash })
     }
@@ -128,7 +163,7 @@ impl TryFrom<&[u8]> for Entry {
         let (entry, len): (Self, usize) = bincode::decode_from_slice(bin, config)?;
 
         if len != bin.len() {
-            return Err(Error::WrongType("entry_bin_len"));
+            return Err(Error::BadEtf("entry_bin_len"));
         }
 
         Ok(entry)
@@ -144,21 +179,19 @@ impl TryInto<Vec<u8>> for Entry {
     }
 }
 
-impl ProtoExt for Entry {
-    type Error = Error;
-
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
-        let bin = map.get_binary("entry_packed").ok_or(Error::Missing("entry_packed"))?;
-        Entry::from_etf_bin_validated(bin, ENTRY_SIZE)
-    }
-}
-
 #[async_trait::async_trait]
-impl HandleExt for Entry {
-    type Error = Error;
+impl Proto for Entry {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
 
-    async fn handle(self) -> Result<Instruction, Self::Error> {
-        self.handle_inner().await
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, proto::Error> {
+        let bin = map.get_binary("entry_packed").ok_or(Error::BadEtf("entry_packed"))?;
+        Entry::from_etf_bin_validated(bin, ENTRY_SIZE).map_err(Into::into)
+    }
+
+    async fn handle_inner(&self) -> Result<proto::Instruction, proto::Error> {
+        self.handle_inner().await.map_err(Into::into)
     }
 }
 
@@ -174,7 +207,9 @@ impl fmt::Debug for Entry {
 }
 
 impl Entry {
-    async fn handle_inner(self) -> Result<Instruction, Error> {
+    pub const NAME: &'static str = "entry";
+
+    async fn handle_inner(&self) -> Result<proto::Instruction, Error> {
         let height = self.header.height;
 
         // Compute rooted_tip_height if possible
@@ -192,19 +227,19 @@ impl Entry {
         if height >= rooted_height {
             let hash = self.hash.clone();
             let epoch = self.get_epoch();
-            let slot = self.header.slot;
-            let bin: Vec<u8> = self.try_into()?;
+            let slot = self.header.slot; // height is the same as slot in amadeus
+            let bin: Vec<u8> = self.clone().try_into()?;
 
             fabric::insert_entry(&hash, height, slot, &bin, get_unix_millis_now())?;
-            archiver::store(bin, format!("epoch-{}", epoch), format!("entry-{}-{}", height, slot)).await?;
+            archiver::store(bin, format!("epoch-{}", epoch), format!("entry-{}", height)).await?;
         }
 
-        Ok(Instruction::Noop)
+        Ok(proto::Instruction::Noop)
     }
 
     pub fn from_etf_bin_validated(bin: &[u8], entry_size_limit: usize) -> Result<Entry, Error> {
         if bin.len() >= entry_size_limit {
-            return Err(Error::TooLarge);
+            return Err(Error::BadEtf("entry_bin_too_large"));
         }
 
         let parsed = ParsedEntry::from_etf_bin(bin)?;
@@ -217,12 +252,12 @@ impl Entry {
 
     fn validate_contents(&self, is_special_meeting_block: bool) -> Result<(), Error> {
         if self.txs.len() > MAX_TXS {
-            return Err(Error::WrongType("txs_len_over_100"));
+            return Err(Error::BadEtf("txs_len_over_100"));
         }
 
         let txs_bin = self.txs.iter().flatten().cloned().collect::<Vec<u8>>();
         if self.header.txs_hash.as_slice() != blake3::hash(&txs_bin).as_slice() {
-            return Err(Error::TxsHashInvalid);
+            return Err(Error::BadTxsHash);
         }
 
         for txp in &self.txs {
@@ -238,7 +273,7 @@ impl Entry {
         // dr' = blake3(dr)
         let dr = blake3::hash(&self.header.dr);
         // vr' = sign(sk, prev_vr, DST_VRF)
-        let vr = bls12_381::sign(signer_sk, &self.header.vr, DST_VRF).map_err(|_| Error::InvalidSignature)?;
+        let vr = bls12_381::sign(signer_sk, &self.header.vr, DST_VRF)?;
 
         Ok(EntryHeader {
             slot,
@@ -275,10 +310,10 @@ struct ParsedEntry {
 
 impl ParsedEntry {
     fn from_etf_bin(bin: &[u8]) -> Result<Self, Error> {
-        let map = Term::decode(bin)?.get_term_map().ok_or(Error::WrongType("entry"))?;
-        let hash = map.get_binary("hash").ok_or(Error::Missing("hash"))?;
-        let header_bin: Vec<u8> = map.get_binary("header").ok_or(Error::Missing("header"))?;
-        let signature = map.get_binary("signature").ok_or(Error::Missing("signature"))?;
+        let map = Term::decode(bin)?.get_term_map().ok_or(Error::BadEtf("entry"))?;
+        let hash = map.get_binary("hash").ok_or(Error::BadEtf("hash"))?;
+        let header_bin: Vec<u8> = map.get_binary("header").ok_or(Error::BadEtf("header"))?;
+        let signature = map.get_binary("signature").ok_or(Error::BadEtf("signature"))?;
         let mask = map.get_binary("mask").map(bitvec_to_bools);
         let txs: Vec<Vec<u8>> =
             map.get_list("txs").unwrap_or_default().iter().filter_map(TermExt::get_binary).map(Into::into).collect();
@@ -289,21 +324,21 @@ impl ParsedEntry {
 
     fn validate_signature(&self) -> Result<(), Error> {
         if let Some(mask) = &self.entry.mask {
-            // Resolve trainers for this height (chain state dependent)
+            // resolve trainers for this height (chain state dependent)
             if let Some(trainers) = consensus::trainers_for_height(self.entry.header.height) {
-                // Unmask trainers who have signed using the provided bitmask
+                // unmask trainers who have signed using the provided bitmask
                 let signed: Vec<[u8; 48]> = bic::epoch::unmask_trainers(&trainers, &mask);
                 if signed.is_empty() {
-                    // No signers in mask -> invalid aggregate signature
-                    return Err(Error::InvalidSignature);
+                    // no signers in mask -> invalid aggregate signature
+                    return Err(Error::BadAggSignature);
                 }
-                // Aggregate public keys
+                // aggregate public keys
                 let agg_pk = bls12_381::aggregate_public_keys(signed.iter())?;
-                // Verify aggregate signature over blake3(header_bin)
+                // verify aggregate signature over blake3(header_bin)
                 let h = blake3::hash(&self.header_bin);
                 bls12_381::verify(&agg_pk, &self.entry.signature, &h, DST_ENTRY)?;
             } else {
-                return Err(Error::WrongEpochOrUnsupportedAgg); // Trainers unavailable
+                return Err(Error::NoTrainers); // trainers unavailable
             }
         } else {
             let h = blake3::hash(&self.header_bin);

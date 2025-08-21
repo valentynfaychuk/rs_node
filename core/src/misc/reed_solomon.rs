@@ -28,12 +28,12 @@ impl ReedSolomonResource {
         let mut encoded_shards = Vec::with_capacity(chunk_count * 2);
         let mut itr = 0;
 
-        // Step through `data` in increments of `chunk_size`.
+        // step through `data` in increments of `chunk_size`
         for chunk_start in (0..data.len()).step_by(chunk_size) {
             let chunk_end = (chunk_start + chunk_size).min(data.len());
             let chunk = &data[chunk_start..chunk_end];
 
-            // Create a 1024-byte buffer initialized to 0.
+            // create a 1024-byte buffer initialized to 0
             let mut buffer = [0u8; SHARD_SIZE];
             buffer[..chunk.len()].copy_from_slice(chunk);
 
@@ -70,7 +70,7 @@ impl ReedSolomonResource {
                 let shard_data = bin.as_slice();
 
                 let offset = idx_usize * SHARD_SIZE;
-                // Protect against going past original_size
+                // protect against going past original_size
                 let end = (offset + shard_data.len()).min(original_size);
                 combined[offset..end].copy_from_slice(&shard_data[..(end - offset)]);
 

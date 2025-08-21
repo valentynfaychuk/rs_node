@@ -1,7 +1,7 @@
 use bls12_381::*;
 use group::Curve;
 
-// We use blst for signing/verification (hash_to_curve with DST) and serialization
+// we use blst for signing/verification (hash_to_curve with DST) and serialization
 use blst::BLST_ERROR;
 use blst::min_pk::{PublicKey as BlsPublicKey, SecretKey as BlsSecretKey, Signature as BlsSignature};
 
@@ -19,7 +19,7 @@ pub enum Error {
     ZeroSizedInput,
 }
 
-/// Parse a secret key from seed. Accepts either 64 or 32 bytes.
+/// Parse a secret key from seed, accepts either 64 or 32 bytes
 fn parse_secret_key(seed: &[u8]) -> Result<Scalar, Error> {
     if let Ok(bytes_64) = <&[u8; 64]>::try_from(seed) {
         return Ok(Scalar::from_bytes_wide(bytes_64));
@@ -85,7 +85,7 @@ fn parse_signature(bytes: &[u8]) -> Result<G2Projective, Error> {
 }
 
 fn sign_from_scalar(scalar: Scalar, msg: &[u8], dst: &[u8]) -> Result<BlsSignature, Error> {
-    // Convert Scalar to big-endian bytes for blst SecretKey
+    // convert Scalar to big-endian bytes for blst SecretKey
     let mut sk_be = scalar.to_bytes();
     sk_be.reverse();
     let sk = BlsSecretKey::from_bytes(&sk_be).map_err(|_| Error::InvalidSeed)?;
@@ -101,14 +101,14 @@ pub fn get_public_key(seed: &[u8]) -> Result<[u8; 48], Error> {
     Ok(g1.to_affine().to_compressed())
 }
 
-/// Sign a message with seed-derived secret key. Returns signature bytes (96 bytes in min_pk).
+/// Sign a message with seed-derived secret key, returns signature bytes (96 bytes in min_pk)
 pub fn sign(seed: &[u8], message: &[u8], dst: &[u8]) -> Result<[u8; 96], Error> {
     let sk = parse_secret_key(seed)?;
     let signature = sign_from_scalar(sk, message, dst)?;
     Ok(signature.to_bytes())
 }
 
-/// Verify a signature using a compressed G1 public key (48 bytes) and signature (96 bytes).
+/// Verify a signature using a compressed G1 public key (48 bytes) and signature (96 bytes)
 /// Errors out if the signature is invalid
 pub fn verify(pk_bytes: &[u8], sig_bytes: &[u8], msg: &[u8], dst: &[u8]) -> Result<(), Error> {
     let pk = BlsPublicKey::deserialize(pk_bytes).map_err(|_| Error::InvalidPoint)?;
@@ -126,7 +126,7 @@ pub fn verify(pk_bytes: &[u8], sig_bytes: &[u8], msg: &[u8], dst: &[u8]) -> Resu
     if err == BLST_ERROR::BLST_SUCCESS { Ok(()) } else { Err(Error::VerificationFailed) }
 }
 
-/// Aggregate multiple compressed G1 public keys into one compressed G1 public key (48 bytes).
+/// Aggregate multiple compressed G1 public keys into one compressed G1 public key (48 bytes)
 pub fn aggregate_public_keys<'a, T>(public_keys: T) -> Result<[u8; 48], Error>
 where
     T: IntoIterator,
@@ -145,7 +145,7 @@ where
     Ok(acc.to_affine().to_compressed())
 }
 
-/// Aggregate multiple signatures (compressed G2, 96 bytes) into one compressed G2 (96 bytes).
+/// Aggregate multiple signatures (compressed G2, 96 bytes) into one compressed G2 (96 bytes)
 pub fn aggregate_signatures<'a, T>(signatures: T) -> Result<[u8; 96], Error>
 where
     T: IntoIterator,

@@ -4,9 +4,8 @@ use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 use core::node::ReedSolomonReassembler;
-use core::node::handler::Instruction;
 use core::node::msg_v2::MessageV2;
-use core::node::proto::Proto;
+use core::node::proto::{Instruction, from_etf_bin};
 use core::test_data::ping::PING;
 
 use plot::{serve, state::AppState};
@@ -109,7 +108,7 @@ async fn handle(
             match reassembler.add_shard(&msg).await {
                 Ok(Some(payload)) => {
                     // final shard received - reassembler assembled the message
-                    match Proto::from_etf_validated(&payload) {
+                    match from_etf_bin(&payload) {
                         Ok(proto) => {
                             app_state.seen_peer(src, Some(pk_str), Some(proto.get_name().into())).await;
                             match proto.handle().await {

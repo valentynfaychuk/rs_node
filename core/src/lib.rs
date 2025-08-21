@@ -18,9 +18,9 @@ pub enum Error {
 }
 
 pub async fn init(path: Option<&str>) -> Result<(), Error> {
-    // Initialize the global state or perform any necessary setup.
-    // This function can be used to set up logging, metrics, etc.
-    // Currently, it does nothing but can be extended in the future.
+    // initialize the global state or perform any necessary setup
+    // this function can be used to set up logging, metrics, etc
+    // currently, it does nothing but can be extended in the future
     let base = path.unwrap_or(config::work_dir());
     consensus::fabric::init(base).await?;
     misc::archiver::init(base).await?;

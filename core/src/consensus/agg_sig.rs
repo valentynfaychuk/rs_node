@@ -1,6 +1,6 @@
 use crate::misc::bls12_381::{Error, aggregate_signatures};
 
-// Domain Separation Tags (DST), aligned with the Elixir implementation
+// domain separation tags (DST)
 pub const DST: &[u8] = b"AMADEUS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
 pub const DST_POP: &[u8] = b"AMADEUS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 pub const DST_ATT: &[u8] = b"AMADEUS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_ATTESTATION_";
@@ -20,9 +20,9 @@ pub struct AggSig {
 }
 
 impl AggSig {
-    /// Create a new aggregate signature structure with a single signer set in the mask.
-    /// `trainers` is a list of public keys (compressed G1, 48 bytes) in a canonical order.
-    /// `pk` must be present in `trainers`; otherwise returns Error::InvalidPoint.
+    /// Create a new aggregate signature structure with a single signer set in the mask
+    /// `trainers` is a list of public keys (compressed G1, 48 bytes) in a canonical order
+    /// `pk` must be present in `trainers`; otherwise returns Error::InvalidPoint
     pub fn new<TPk>(trainers: &[TPk], pk: &TPk, signature: &[u8]) -> Result<Self, Error>
     where
         TPk: AsRef<[u8]>,
@@ -37,8 +37,8 @@ impl AggSig {
         Ok(Self { mask, agg_sig })
     }
 
-    /// Add another signer's signature if not already present in the mask.
-    /// Aggregates the signature with the existing aggregate using bls::aggregate_signatures.
+    /// Add another signer's signature if not already present in the mask
+    /// Aggregates the signature with the existing aggregate using bls::aggregate_signatures
     /// If the signer is already set, this is a no-op and returns Ok(())
     pub fn add<TPk>(&mut self, trainers: &[TPk], pk: &TPk, signature: &[u8]) -> Result<(), Error>
     where

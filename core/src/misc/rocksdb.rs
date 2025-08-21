@@ -68,7 +68,7 @@ pub async fn init(base: &str) -> Result<(), Error> {
 }
 
 pub fn close() {
-    // rocksdb closes on drop; we cannot drop OnceCell contents safely here.
+    // rocksdb closes on drop, we cannot drop OnceCell contents safely here
 }
 
 fn get_handles() -> &'static DbHandles {
@@ -107,8 +107,8 @@ pub fn iter_prefix(cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, E
     Ok(out)
 }
 
-/// Find the latest key-value under `prefix` with key <= `prefix || key_suffix`.
-/// Returns the raw key and value if found, otherwise None.
+/// Find the latest key-value under `prefix` with key <= `prefix || key_suffix`
+/// Returns the raw key and value if found, otherwise None
 pub fn get_prev_or_first(cf: &str, prefix: &str, key_suffix: &str) -> Result<Option<(Vec<u8>, Vec<u8>)>, Error> {
     let h = get_handles();
     let cf_h = h.db.cf_handle(cf).expect("cf name");

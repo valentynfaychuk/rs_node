@@ -115,12 +115,12 @@ impl TryInto<Vec<u8>> for MessageV2 {
 
 impl MessageV2 {
     fn try_from_inner(bin: &[u8]) -> Result<Self, Error> {
-        // Must be at least header length
+        // must be at least header length
         if bin.len() < 3 + 3 + 1 + 48 + 96 + 2 + 2 + 8 + 4 {
             return Err(Error::WrongLength(bin.len()));
         }
 
-        // Magic
+        // magic
         if &bin[0..3] != b"AMA" {
             return Err(Error::InvalidMagic);
         }
@@ -128,7 +128,7 @@ impl MessageV2 {
         let version_bytes = &bin[3..6];
         let version = format!("{}.{}.{}", version_bytes[0], version_bytes[1], version_bytes[2]);
 
-        // Next is 7 zero bits and 1 flag bit, total 1 byte
+        // next is 7 zero bits and 1 flag bit, total 1 byte
         let flag_byte = bin[6];
         if flag_byte & 0b11111110 != 0 {
             return Err(Error::InvalidFlags(flag_byte));

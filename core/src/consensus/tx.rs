@@ -31,8 +31,6 @@ pub struct TxU {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("etf decode error")]
-    Decode,
     #[error("wrong term type: {0}")]
     WrongType(&'static str),
     #[error("missing field: {0}")]
@@ -75,17 +73,19 @@ pub enum Error {
     AttachedAmountMustBeIncluded,
     #[error("attached_symbol must be included")]
     AttachedSymbolMustBeIncluded,
+    #[error(transparent)]
+    VanillaSer(#[from] vanilla_ser::Error),
 }
 
 impl TxU {
     pub fn from_vanilla(tx_packed: &[u8]) -> Result<TxU, Error> {
-        // Decode outer map via VanillaSer
-        let outer_val = vanilla_ser::decode_all(tx_packed).map_err(|_| Error::Decode)?;
+        // decode outer map via VanillaSer
+        let outer_val = vanilla_ser::decode_all(tx_packed)?;
         let outer = match &outer_val {
             Value::Map(m) => m,
             _ => return Err(Error::WrongType("outer_map")),
         };
-        // Helper to get a required bytes field
+        // helper to get a required bytes field
         let get_bytes = |m: &BTreeMap<Value, Value>, key: &'static str| -> Result<Vec<u8>, Error> {
             match m.get(&Value::Bytes(key.as_bytes().to_vec())) {
                 Some(Value::Bytes(b)) => Ok(b.clone()),
@@ -97,8 +97,8 @@ impl TxU {
         let hash = get_bytes(outer, "hash")?.try_into().map_err(|_| Error::WrongType("hash:32"))?;
         let signature = get_bytes(outer, "signature")?.try_into().map_err(|_| Error::WrongType("signature:96"))?;
 
-        // Decode inner tx map
-        let inner_val = vanilla_ser::decode_all(&tx_encoded).map_err(|_| Error::Decode)?;
+        // decode inner tx map
+        let inner_val = vanilla_ser::decode_all(&tx_encoded)?;
         let inner = match &inner_val {
             Value::Map(m) => m,
             _ => return Err(Error::WrongType("tx_map")),
@@ -169,7 +169,7 @@ fn is_ascii_eq(bytes: &[u8], s: &str) -> bool {
 }
 
 pub fn valid_pk(pk: &[u8]) -> bool {
-    // Accept burn address or any valid BLS public key, like Elixir TX.valid_pk/1
+    // accept burn address or any valid BLS public key
     if pk.len() == 48 {
         if let Ok(arr) = <&[u8; 48]>::try_from(pk) {
             if arr == &crate::bic::coin::burn_address() {
@@ -189,7 +189,7 @@ pub fn known_receivers(txu: &TxU) -> Vec<Vec<u8>> {
     let f_is_transfer = a.function == "transfer";
 
     if c_is_coin && f_is_transfer {
-        // Cases:
+        // cases:
         // [receiver, _amount]
         // ["AMA", receiver, _amount]
         // [receiver, _amount, _symbol]
@@ -228,18 +228,18 @@ pub fn known_receivers(txu: &TxU) -> Vec<Vec<u8>> {
 pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, Error> {
     let txu = TxU::from_vanilla(tx_packed)?;
 
-    // Compute canonical hash of tx_encoded
+    // compute canonical hash of tx_encoded
     let h = blake3::hash(&txu.tx_encoded);
     if txu.hash.as_slice() != h.as_ref() {
         return Err(Error::InvalidHash);
     }
 
-    // Verify signature over hash with DST_TX
+    // verify signature over hash with DST_TX
     bls12_381::verify(&txu.tx.signer, &txu.signature, &h, DST_TX).map_err(|_| Error::InvalidSignature)?;
 
-    // Nonce checks (Elixir allowed up to 99..(20 digits); here we skip as nonce is i64 already)
+    // nonce checks skipped as nonce is i64 already
 
-    // Actions checks
+    // actions checks
     if txu.tx.actions.is_empty() {
         return Err(Error::ActionsNotList);
     }
@@ -258,9 +258,9 @@ pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Resul
         return Err(Error::FunctionMustBeBinary);
     }
 
-    // Args already validated as binaries during unpack
+    // args already validated as binaries during unpack
 
-    // Contract/function validity
+    // contract/function validity
     let allowed_contract =
         is_ascii_eq(&a.contract, "Epoch") || is_ascii_eq(&a.contract, "Coin") || is_ascii_eq(&a.contract, "Contract");
     let allowed_function = a.function == "submit_sol"
@@ -284,7 +284,7 @@ pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Resul
         }
     }
 
-    // Attachments
+    // attachments
     if let Some(sym) = &a.attached_symbol {
         // must be binary and 1..32
         if sym.is_empty() || sym.len() > 32 {
@@ -301,7 +301,7 @@ pub fn validate_basic(tx_packed: &[u8], is_special_meeting_block: bool) -> Resul
     Ok(txu)
 }
 
-/// Validate wrapper mirroring Elixir TX.validate/2, delegating to validate_basic.
+/// Validate wrapper delegating to validate_basic
 pub fn validate(tx_packed: &[u8], is_special_meeting_block: bool) -> Result<TxU, Error> {
     validate_basic(tx_packed, is_special_meeting_block)
 }
@@ -326,7 +326,7 @@ pub fn build(
 
 /// Chain-level validity checks (nonce, balance, epoch). TODO: requires Consensus state.
 pub fn chain_valid(txu: &TxU) -> bool {
-    // Elixir logic:
+    // elixir logic:
     // chainNonce = Consensus.chain_nonce(txu.tx.signer)
     // nonceValid = !chainNonce or txu.tx.nonce > chainNonce
     let chain_nonce = crate::consensus::chain_nonce(&txu.tx.signer);

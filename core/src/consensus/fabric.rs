@@ -42,14 +42,14 @@ pub fn close() {
     rocksdb::close();
 }
 
-/// Insert an entry into RocksDB: default CF by hash, seen time, and index by height/slot.
+/// Insert an entry into RocksDB: default CF by hash, seen time, and index by height/slot
 pub fn insert_entry(hash: &[u8; 32], height: u64, slot: u64, entry_bin: &[u8], seen_millis: u128) -> Result<(), Error> {
-    // Idempotent: if already present under default CF, do nothing
+    // idempotent: if already present under default CF, do nothing
     if rocksdb::get(CF_DEFAULT, hash)?.is_none() {
         rocksdb::put(CF_DEFAULT, hash, entry_bin)?;
         rocksdb::put(CF_MY_SEEN_TIME_FOR_ENTRY, hash, &seen_millis.to_be_bytes())?;
 
-        // Index by height and slot -> value is hash, key is "{height}:{hash_b58_or_bytes}"
+        // index by height and slot -> value is hash, key is "{height}:{hash_b58_or_bytes}"
         let b58_hash = bs58::encode(hash).into_string();
         rocksdb::put(CF_ENTRY_BY_HEIGHT, format!("{}:{}", height, &b58_hash).as_bytes(), hash)?;
         rocksdb::put(CF_ENTRY_BY_SLOT, format!("{}:{}", slot, &b58_hash).as_bytes(), hash)?;
@@ -58,7 +58,7 @@ pub fn insert_entry(hash: &[u8; 32], height: u64, slot: u64, entry_bin: &[u8], s
     Ok(())
 }
 
-/// Get all entries (ETF-encoded) for a specific height.
+/// Get all entries (ETF-encoded) for a specific height
 pub fn entries_by_height(height: u64) -> Result<Vec<Vec<u8>>, Error> {
     let prefix = format!("{}:", height);
     let kvs = rocksdb::iter_prefix(CF_ENTRY_BY_HEIGHT, prefix.as_bytes())?;
@@ -72,11 +72,11 @@ pub fn entries_by_height(height: u64) -> Result<Vec<Vec<u8>>, Error> {
     Ok(out)
 }
 
-/// Insert the genesis entry and initial state markers if not present yet.
+/// Insert the genesis entry and initial state markers if not present yet
 pub fn insert_genesis() -> Result<(), Error> {
     let genesis_entry = consensus::entry_gen::get();
     if rocksdb::get(CF_DEFAULT, &genesis_entry.hash)?.is_some() {
-        return Ok(()); // Already inserted, no-op
+        return Ok(()); // already inserted, no-op
     }
 
     println!("🌌  Ahhh... Fresh Fabric. Marking genesis..");
@@ -87,11 +87,11 @@ pub fn insert_genesis() -> Result<(), Error> {
     let entry_bin: Vec<u8> = genesis_entry.try_into().map_err(|_| Error::Missing("genesis_entry"))?;
     insert_entry(&hash, height, slot, &entry_bin, get_unix_millis_now())?;
 
-    // Insert genesis attestation aggregate (no-op until full trainers implemented)
+    // insert genesis attestation aggregate (no-op until full trainers implemented)
     let att = entry_gen::attestation();
     let _ = aggregate_attestation(&att)?;
 
-    // Set rooted_tip = genesis.hash and temporal_height = 0
+    // set rooted_tip = genesis.hash and temporal_height = 0
     set_rooted_tip(&hash)?;
     rocksdb::put(CF_SYSCONF, b"temporal_height", &height.to_be_bytes())?;
 
@@ -228,7 +228,7 @@ pub fn insert_consensus(
     if score < 0.67 {
         return Ok(());
     }
-    // TODO: trainers and best_by_weight are not implemented; we optimistically accept if threshold is met.
+    // TODO: trainers and best_by_weight are not implemented, we optimistically accept if threshold is met
 
     let mut map = match rocksdb::get(CF_CONSENSUS_BY_ENTRYHASH, &entry_hash)? {
         Some(bin) => unpack_consensus_map(&bin)?,

@@ -95,13 +95,13 @@ impl ReedSolomonReassembler {
         })
     }
 
-    // Adds a shard to the reassembly buffer
-    // When enough shards collected, reconstructs
+    // adds a shard to the reassembly buffer
+    // when enough shards collected, reconstructs
     pub async fn add_shard_inner(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
         let key = ReassemblyKey::from(message);
         let shard = &message.payload;
 
-        // Some messages are single-shard only, so we can skip the reorg logic
+        // some messages are single-shard only, so we can skip the reorg logic
         if key.shard_total == 1 {
             Self::verify_msg_sig(&key, &message.signature, message.payload.as_slice())?;
             return Ok(Some(message.payload.clone()));
@@ -121,13 +121,13 @@ impl ReedSolomonReassembler {
                 // do nothing
             }
             Some(EntryState::Collecting(m)) => {
-                // If we still have fewer than data_shards-1 before adding this shard, keep collecting
+                // if we still have fewer than data_shards-1 before adding this shard, keep collecting
                 if m.len() < data_shards.saturating_sub(1) {
                     m.insert(message.shard_index, shard.clone());
                     return Ok(None);
                 }
-                // Otherwise, we can attempt reassembly with existing m + this shard
-                // Build shard list first (while borrow is active), then drop borrow before mutating self.reorg
+                // otherwise, we can attempt reassembly with existing m + this shard
+                // build shard list first (while borrow is active), then drop borrow before mutating self.reorg
                 let shards: Vec<(usize, Vec<u8>)> = {
                     let mut v: Vec<(usize, Vec<u8>)> =
                         m.iter().map(|(idx, bytes)| (*idx as usize, bytes.clone())).collect();
@@ -135,7 +135,7 @@ impl ReedSolomonReassembler {
                     v
                 };
 
-                // Now mark as spent
+                // now mark as spent
                 reorg.insert(key.clone(), EntryState::Spent);
 
                 let msg_size = message.original_size as usize;
