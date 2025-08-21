@@ -11,14 +11,13 @@ use crate::misc::reed_solomon::ReedSolomonResource;
 use crate::misc::utils::{TermExt, TermMap, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now, get_unix_nanos_now};
 use crate::node::handler::Instruction;
 use crate::node::msg_v2::MessageV2;
-use crate::{config, consensus};
+use crate::config;
 use eetf::convert::TryAsRef;
 use eetf::{Atom, Binary, DecodeError as EtfDecodeError, EncodeError as EtfEncodeError, List, Map, Term};
 use miniz_oxide::deflate::{CompressionLevel, compress_to_vec};
 use miniz_oxide::inflate::{DecompressError, decompress_to_vec};
 use std::collections::HashMap;
 use std::io::Error as IoError;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{instrument, warn};
 
 /// Every object that has this trait must be convertible from an Erlang ETF

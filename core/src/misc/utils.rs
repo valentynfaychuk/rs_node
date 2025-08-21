@@ -2,7 +2,6 @@ use eetf::convert::TryAsRef;
 use eetf::{Atom, Binary, List, Term};
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 

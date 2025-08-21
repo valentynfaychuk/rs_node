@@ -8,14 +8,10 @@ use crate::misc::utils::{TermExt, TermMap, bitvec_to_bools, get_unix_millis_now}
 use crate::misc::{archiver, blake3};
 use crate::node::handler::{HandleExt, Instruction};
 use crate::node::proto::ProtoExt;
-use crate::{bic, consensus, misc};
-use eetf::FixInteger;
-use eetf::{Atom, BigInteger, Binary, List, Map, Term};
+use crate::{bic, consensus};
+use eetf::{Atom, BigInteger, Binary, Map, Term};
 use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
 
 const MAX_TXS: usize = 100; // Maximum number of transactions in an entry
 

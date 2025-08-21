@@ -1,8 +1,7 @@
 use crate::misc::blake3;
-use crate::misc::utils::{TermExt, TermMap};
+use crate::misc::utils::TermMap;
 use crate::node::handler::{HandleExt, Instruction};
 use crate::node::proto::ProtoExt;
-use eetf::Term;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::convert::TryInto;

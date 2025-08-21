@@ -4,7 +4,7 @@ use crate::consensus::attestation::Attestation;
 use crate::consensus::entry::Entry;
 use crate::consensus::entry_gen;
 use crate::misc::rocksdb;
-use crate::misc::utils::{TermExt, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
+use crate::misc::utils::{bools_to_bitvec, get_unix_millis_now};
 use eetf::{Atom, Binary, Term};
 use std::collections::HashMap;
 // TODO: make the database trait that the fabric will use
@@ -143,7 +143,7 @@ fn pack_consensus_map(map: &HashMap<[u8; 32], StoredConsensus>) -> Result<Vec<u8
     Ok(out)
 }
 
-fn unpack_consensus_map(bin: &[u8]) -> Result<HashMap<[u8; 32], StoredConsensus>, Error> {
+fn unpack_consensus_map(_bin: &[u8]) -> Result<HashMap<[u8; 32], StoredConsensus>, Error> {
     unimplemented!();
     // let map = Term::decode(bin)?.get_term_map().unwrap_or_default();
     //
