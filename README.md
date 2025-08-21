@@ -97,6 +97,25 @@ amadeus_packet_errors_total{type="handling"} 0
 amadeus_packet_errors_total{type="unknown_proto"} 0
 ```
 
+## Performance considerations
+
+The handling of parsed and validated incoming messages are happening through the
+`HandleExt` trait, which is `#[async_trait]`, which is very flexible and allow
+for having trait objects. Further performance improvements could include making
+it more explicit, for example by using:
+
+```rust
+pub trait HandleExt {
+    type Fut<'a>: Future<Output=Result<..>> + 'a
+    where
+        Self: 'a;
+    fn handle<'a>(&'a self) -> Self::Fut<'a>;
+}
+```
+
+Another direction of improvement is to avoid using synchronisation, like mutexes,
+and instead to use channels for communication between the threads.
+
 ## Adding core library to other project
 
 ```bash

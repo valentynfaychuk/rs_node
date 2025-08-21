@@ -17,6 +17,7 @@ mod tracing;
 async fn main() -> std::io::Result<()> {
     // Initialize tracing subscriber for logging.
     tracing::init_tracing();
+    core::init(None).await.expect("core init");
 
     // Target UDP address of an Amadeus node.
     let addr: SocketAddr =
@@ -111,7 +112,7 @@ async fn handle(
                     match Proto::from_etf_validated(&payload) {
                         Ok(proto) => {
                             app_state.seen_peer(src, Some(pk_str), Some(proto.get_name().into())).await;
-                            match proto.handle() {
+                            match proto.handle().await {
                                 Ok(instruction) => return Some(instruction),
                                 Err(e) => {
                                     println!("failed to handle proto: {}", e);

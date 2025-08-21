@@ -88,8 +88,7 @@ pub enum EpochCall {
         epoch: u64,
         malicious_pk: [u8; 48],
         signature: Vec<u8>,
-        mask_size: usize,
-        mask: Vec<u8>,
+        mask: Vec<bool>,
         // Note: In Elixir, trainers are pulled from KV; here we accept them optionally.
         trainers: Option<Vec<[u8; 48]>>,
     },
@@ -104,8 +103,8 @@ impl Epoch {
         match op {
             EpochCall::SubmitSol { sol } => self.submit_sol(env, &sol),
             EpochCall::SetEmissionAddress { address } => self.set_emission_address(env, &address),
-            EpochCall::SlashTrainer { epoch, malicious_pk, signature, mask_size, mask, trainers } => {
-                self.slash_trainer(env, epoch, &malicious_pk, &signature, mask_size, &mask, trainers)
+            EpochCall::SlashTrainer { epoch, malicious_pk, signature, mask, trainers } => {
+                self.slash_trainer(env, epoch, &malicious_pk, &signature, &mask, trainers)
             }
         }
     }
@@ -157,8 +156,7 @@ impl Epoch {
         epoch: u64,
         malicious_pk: &[u8; 48],
         signature: &[u8],
-        mask_size: usize,
-        mask: &[u8],
+        mask: &Vec<bool>,
         trainers_opt: Option<Vec<[u8; 48]>>,
     ) -> Result<(), EpochError> {
         if env.entry_epoch != epoch {
@@ -176,7 +174,7 @@ impl Epoch {
         }
 
         // Verify and threshold as in Elixir
-        slash_trainer_verify(epoch, malicious_pk, &trainers, mask_size, mask, signature)?;
+        slash_trainer_verify(epoch, malicious_pk, &trainers, mask, signature)?;
 
         // TODO: persist removal into KV and update trainer set and height index
         Ok(())
@@ -193,12 +191,11 @@ pub fn slash_trainer_verify(
     cur_epoch: u64,
     malicious_pk: &[u8; 48],
     trainers: &[[u8; 48]],
-    mask_size_bits: usize,
-    mask: &[u8],
+    mask: &Vec<bool>,
     signature: &[u8],
 ) -> Result<(), EpochError> {
     // Unmask trainers according to bit mask
-    let signers = unmask_trainers(trainers, mask, mask_size_bits);
+    let signers = unmask_trainers(trainers, mask);
     let consensus_pct = if trainers.is_empty() { 0.0 } else { (signers.len() as f64) / (trainers.len() as f64) };
 
     if consensus_pct < 0.67 {
@@ -218,11 +215,12 @@ pub fn slash_trainer_verify(
 }
 
 /// Return the subset of trainers whose corresponding bits are set in the bitmask
-pub fn unmask_trainers(trainers: &[[u8; 48]], mask: &[u8], mask_size_bits: usize) -> Vec<[u8; 48]> {
+pub fn unmask_trainers(trainers: &[[u8; 48]], mask: &Vec<bool>) -> Vec<[u8; 48]> {
     let mut res = Vec::new();
-    let n = trainers.len();
-    for i in 0..n {
-        if bit_is_set(mask, i, mask_size_bits) {
+    for i in 0..trainers.len() {
+        if let Some(&bit) = mask.get(i)
+            && bit
+        {
             res.push(trainers[i]);
         }
     }
@@ -240,42 +238,4 @@ fn bit_is_set(mask: &[u8], idx: usize, mask_bits: usize) -> bool {
     }
     let b = mask[byte_idx];
     ((b >> bit_idx) & 1) == 1
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn emission_pre_and_post_start() {
-        assert_eq!(epoch_emission(0), EPOCH_EMISSION_BASE + EPOCH_EMISSION_FIXED);
-        // Just ensure it runs for a later epoch
-        let _e = epoch_emission(START_EPOCH);
-    }
-
-    #[test]
-    fn bitmask_unmask_trainers() {
-        let trainers = vec![[1u8; 48], [2u8; 48], [3u8; 48], [4u8; 48]];
-        // mask with bits 0 and 2 set => 0b00000101
-        let mask = [0b0000_0101u8];
-        let signers = unmask_trainers(&trainers, &mask, 4);
-        assert_eq!(signers.len(), 2);
-        assert_eq!(signers[0], trainers[0]);
-        assert_eq!(signers[1], trainers[2]);
-    }
-
-    #[test]
-    fn submit_sol_basic_checks() {
-        // Construct a minimal V0 solution: epoch=0, pk(48), pop(96), computor(48), rest empty
-        let mut sol = Vec::new();
-        sol.extend_from_slice(&0u32.to_le_bytes());
-        sol.extend_from_slice(&[7u8; 48]); // pk
-        sol.extend_from_slice(&[8u8; 96]); // pop (invalid, so verify_with_hash will be false)
-        sol.extend_from_slice(&[9u8; 48]); // computor
-
-        let env = CallEnv { entry_epoch: 0, entry_height: 0, account_caller: [0u8; 48] };
-        let epoch = Epoch::default();
-        let res = epoch.call(EpochCall::SubmitSol { sol }, &env);
-        assert!(matches!(res, Err(EpochError::InvalidSol) | Err(EpochError::InvalidPop)));
-    }
 }

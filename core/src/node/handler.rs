@@ -5,21 +5,22 @@ use crate::consensus::attestation::AttestationBulk;
 use crate::consensus::entry::Entry;
 use crate::node::proto::{Peers, Ping, Pong, TxPool};
 
+#[async_trait::async_trait]
 pub trait HandleExt
 where
     Self: Sized,
 {
     type Error;
     /// Handle a message returning instructions for upper layers
-    fn handle(self) -> Result<Instruction, Self::Error>;
+    async fn handle(self) -> Result<Instruction, Self::Error>;
 }
 
 /// Result of handling an incoming message.
 #[derive(Debug)]
 pub enum Instruction {
     Noop,
-    ReplyPong { ts_m: i64 },
-    ObservedPong { ts_m: i64, seen_time_ms: i64 },
+    ReplyPong { ts_m: u128 },
+    ObservedPong { ts_m: u128, seen_time_ms: u128 },
     ValidTxs { txs: Vec<Vec<u8>> },
     Peers { ips: Vec<String> },
     ReceivedSol { sol: Solution },
@@ -36,36 +37,40 @@ pub enum Instruction {
     SolicitEntry2,
 }
 
+#[async_trait::async_trait]
 impl HandleExt for Ping {
     type Error = Error;
 
-    fn handle(self) -> Result<Instruction, Self::Error> {
+    async fn handle(self) -> Result<Instruction, Self::Error> {
         Ok(Instruction::ReplyPong { ts_m: self.ts_m })
     }
 }
 
+#[async_trait::async_trait]
 impl HandleExt for Pong {
     type Error = Error;
 
-    fn handle(self) -> Result<Instruction, Self::Error> {
+    async fn handle(self) -> Result<Instruction, Self::Error> {
         // TODO: update ETS-like peer table with latency now_ms - p.ts_m
         Ok(Instruction::Noop)
     }
 }
 
+#[async_trait::async_trait]
 impl HandleExt for TxPool {
     type Error = Error;
 
-    fn handle(self) -> Result<Instruction, Self::Error> {
+    async fn handle(self) -> Result<Instruction, Self::Error> {
         // TODO: update ETS-like tx pool with valid_txs
         Ok(Instruction::Noop)
     }
 }
 
+#[async_trait::async_trait]
 impl HandleExt for Peers {
     type Error = Error;
 
-    fn handle(self) -> Result<Instruction, Self::Error> {
+    async fn handle(self) -> Result<Instruction, Self::Error> {
         // TODO: update ETS-like peer table with new IPs
         Ok(Instruction::Noop)
     }

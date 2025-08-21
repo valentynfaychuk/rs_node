@@ -31,6 +31,7 @@ once_cell = "1.19.0"
 rocksdb = { version = "0.24.0", default-features = false, features = ["lz4", "snappy"] }
 tracing = { version = "0.1.41", default-features = false, features = ["std", "attributes"] }
 url = "2.5.4"
+async-trait = "0.1.89"
 
 [features]
 rayon = ["blake3/rayon"] # quick way to enable rayon, may not need it

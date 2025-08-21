@@ -1,8 +1,9 @@
 use crate::consensus::DST_NODE;
+use crate::misc;
+use misc::utils::get_unix_nanos_now;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 // does not poison mutex on panic
 
@@ -11,8 +12,10 @@ use crate::misc::bls12_381;
 use crate::misc::reed_solomon;
 use crate::misc::reed_solomon::ReedSolomonResource;
 
+type ReassemblySyncMap = Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>;
+
 pub struct ReedSolomonReassembler {
-    reorg: Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>,
+    reorg: ReassemblySyncMap,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -27,7 +30,7 @@ pub enum Error {
 
 #[derive(Clone, Debug, Eq)]
 struct ReassemblyKey {
-    pk: Vec<u8>,
+    pk: [u8; 48],
     ts_nano: u64,
     shard_total: u16,
 }
@@ -65,19 +68,20 @@ impl ReedSolomonReassembler {
 
     /// This starts a timer that clears outdated reassemblies
     pub fn start_periodic_cleanup(&self) {
-        let reorg = self.reorg.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(8));
-            loop {
-                interval.tick().await;
-                Self::clear_stale(reorg.clone()).await;
-            }
-        });
+        tokio::spawn(Self::periodic_cleanup(self.reorg.clone()));
     }
 
-    async fn clear_stale(reorg: Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>) {
-        let now_nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-        let threshold = now_nanos.saturating_sub(8_000_000_000u128);
+    async fn periodic_cleanup(reorg: ReassemblySyncMap) -> ! {
+        use tokio::time::{Duration, interval};
+        let mut int = interval(Duration::from_secs(8));
+        loop {
+            int.tick().await;
+            Self::clear_stale(reorg.clone()).await;
+        }
+    }
+
+    async fn clear_stale(reorg: ReassemblySyncMap) {
+        let threshold = get_unix_nanos_now().saturating_sub(8_000_000_000u128);
         let mut reorg = reorg.lock().await;
         let size_before = reorg.len();
         reorg.retain(|k, _| (k.ts_nano as u128) > threshold);

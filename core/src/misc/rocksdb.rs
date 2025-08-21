@@ -2,11 +2,14 @@ use once_cell::sync::OnceCell;
 use rocksdb::{
     ColumnFamilyDescriptor, Direction, IteratorMode, MultiThreaded, OptimisticTransactionDB, Options, ReadOptions,
 };
+use tokio::fs::create_dir_all;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Db(#[from] rocksdb::Error),
+    RocksDb(#[from] rocksdb::Error),
+    #[error(transparent)]
+    TokioIo(#[from] tokio::io::Error),
 }
 
 pub struct DbHandles {
@@ -35,12 +38,14 @@ fn cf_names() -> &'static [&'static str] {
     ]
 }
 
-pub fn init(path: &str) -> Result<(), Error> {
+/// Expects path directory to exist
+pub async fn init(base: &str) -> Result<(), Error> {
     if GLOBAL_DB.get().is_some() {
         return Ok(());
     }
 
-    let _ = std::fs::create_dir_all(path);
+    let path = format!("{}/db", base);
+    create_dir_all(&path).await?;
 
     let mut db_opts = Options::default();
     db_opts.create_if_missing(true);
@@ -100,4 +105,21 @@ pub fn iter_prefix(cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, E
         out.push((k.to_vec(), v.to_vec()));
     }
     Ok(out)
+}
+
+/// Find the latest key-value under `prefix` with key <= `prefix || key_suffix`.
+/// Returns the raw key and value if found, otherwise None.
+pub fn get_prev_or_first(cf: &str, prefix: &str, key_suffix: &str) -> Result<Option<(Vec<u8>, Vec<u8>)>, Error> {
+    let h = get_handles();
+    let cf_h = h.db.cf_handle(cf).expect("cf name");
+    let seek_key = format!("{}{}", prefix, key_suffix);
+    let mut it = h.db.iterator_cf(&cf_h, IteratorMode::From(seek_key.as_bytes(), Direction::Reverse));
+
+    if let Some(res) = it.next() {
+        let (k, v) = res?;
+        if k.starts_with(prefix.as_bytes()) {
+            return Ok(Some((k.to_vec(), v.to_vec())));
+        }
+    }
+    Ok(None)
 }

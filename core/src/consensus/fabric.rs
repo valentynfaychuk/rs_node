@@ -1,53 +1,114 @@
 use crate::config;
-use crate::consensus::attestation::{Attestation, Error as AttError};
-use crate::consensus::{self};
+use crate::consensus;
+use crate::consensus::attestation::Attestation;
+use crate::consensus::entry::Entry;
+use crate::consensus::entry_gen;
 use crate::misc::rocksdb;
-use crate::misc::utils::TermExt;
+use crate::misc::utils::{TermExt, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
 use eetf::{Atom, Binary, Term};
 use std::collections::HashMap;
+// TODO: make the database trait that the fabric will use
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Rocks(#[from] rocksdb::Error),
+    RocksDb(#[from] rocksdb::Error),
     #[error(transparent)]
     EtfDecode(#[from] eetf::DecodeError),
     #[error(transparent)]
     EtfEncode(#[from] eetf::EncodeError),
     #[error(transparent)]
-    Att(#[from] AttError),
+    Att(#[from] consensus::attestation::Error),
+    #[error("invalid length: {0}")]
+    InvalidLength(&'static str),
     #[error("missing dependency: {0}")]
     Missing(&'static str),
 }
 
 const CF_DEFAULT: &str = "default";
+const CF_ENTRY_BY_HEIGHT: &str = "entry_by_height";
+const CF_ENTRY_BY_SLOT: &str = "entry_by_slot";
 const CF_MY_SEEN_TIME_FOR_ENTRY: &str = "my_seen_time_for_entry";
 const CF_MY_ATTESTATION_FOR_ENTRY: &str = "my_attestation_for_entry";
 const CF_CONSENSUS_BY_ENTRYHASH: &str = "consensus_by_entryhash";
 const CF_SYSCONF: &str = "sysconf";
 
 /// Initialize Fabric DB area (creates/open RocksDB with the required CFs)
-pub fn init() -> Result<(), Error> {
-    let base = config::work_folder();
-    let path = format!("{}/db/fabric", base);
-    rocksdb::init(&path)?;
-    Ok(())
+pub async fn init(base: &str) -> Result<(), Error> {
+    rocksdb::init(&format!("{}/fabric", base)).await.map_err(Into::into)
 }
 
 pub fn close() {
     rocksdb::close();
 }
 
-/// ENTRY STORAGE is not implemented yet in Rust
-pub fn entry_by_hash(_hash: &[u8]) -> Option<EntryStub> {
-    // TODO: implement Entry pack/unpack and hook
-    None
+/// Insert an entry into RocksDB: default CF by hash, seen time, and index by height/slot.
+pub fn insert_entry(hash: &[u8; 32], height: u64, slot: u64, entry_bin: &[u8], seen_millis: u128) -> Result<(), Error> {
+    // Idempotent: if already present under default CF, do nothing
+    if rocksdb::get(CF_DEFAULT, hash)?.is_none() {
+        rocksdb::put(CF_DEFAULT, hash, entry_bin)?;
+        rocksdb::put(CF_MY_SEEN_TIME_FOR_ENTRY, hash, &seen_millis.to_be_bytes())?;
+
+        // Index by height and slot -> value is hash, key is "{height}:{hash_b58_or_bytes}"
+        let b58_hash = bs58::encode(hash).into_string();
+        rocksdb::put(CF_ENTRY_BY_HEIGHT, format!("{}:{}", height, &b58_hash).as_bytes(), hash)?;
+        rocksdb::put(CF_ENTRY_BY_SLOT, format!("{}:{}", slot, &b58_hash).as_bytes(), hash)?;
+    }
+
+    Ok(())
+}
+
+/// Get all entries (ETF-encoded) for a specific height.
+pub fn entries_by_height(height: u64) -> Result<Vec<Vec<u8>>, Error> {
+    let prefix = format!("{}:", height);
+    let kvs = rocksdb::iter_prefix(CF_ENTRY_BY_HEIGHT, prefix.as_bytes())?;
+    let mut out = Vec::new();
+    for (_k, v) in kvs.into_iter() {
+        // v is entry hash
+        if let Some(entry_bin) = rocksdb::get(CF_DEFAULT, &v)? {
+            out.push(entry_bin);
+        }
+    }
+    Ok(out)
+}
+
+/// Insert the genesis entry and initial state markers if not present yet.
+pub fn insert_genesis() -> Result<(), Error> {
+    let genesis_entry = consensus::entry_gen::get();
+    if rocksdb::get(CF_DEFAULT, &genesis_entry.hash)?.is_some() {
+        return Ok(()); // Already inserted, no-op
+    }
+
+    println!("🌌  Ahhh... Fresh Fabric. Marking genesis..");
+
+    let hash = genesis_entry.hash.clone();
+    let height = genesis_entry.header.height;
+    let slot = genesis_entry.header.slot;
+    let entry_bin: Vec<u8> = genesis_entry.try_into().map_err(|_| Error::Missing("genesis_entry"))?;
+    insert_entry(&hash, height, slot, &entry_bin, get_unix_millis_now())?;
+
+    // Insert genesis attestation aggregate (no-op until full trainers implemented)
+    let att = entry_gen::attestation();
+    let _ = aggregate_attestation(&att)?;
+
+    // Set rooted_tip = genesis.hash and temporal_height = 0
+    set_rooted_tip(&hash)?;
+    rocksdb::put(CF_SYSCONF, b"temporal_height", &height.to_be_bytes())?;
+
+    Ok(())
+}
+
+/// Read Entry stub (height only) from CF_DEFAULT by entry hash (32 bytes)
+pub fn get_entry_by_hash(hash: &[u8; 32]) -> Option<Entry> {
+    let bin = rocksdb::get(CF_DEFAULT, hash).ok()??;
+    let entry = Entry::try_from(bin.as_slice()).ok()?;
+    Some(entry)
 }
 
 #[derive(Debug, Clone)]
 pub struct EntryStub {
     pub hash: [u8; 32],
-    pub header_height: i64,
+    pub header_height: u64,
 }
 
 pub fn my_attestation_by_entryhash(hash: &[u8]) -> Result<Option<Attestation>, Error> {
@@ -83,51 +144,19 @@ fn pack_consensus_map(map: &HashMap<[u8; 32], StoredConsensus>) -> Result<Vec<u8
 }
 
 fn unpack_consensus_map(bin: &[u8]) -> Result<HashMap<[u8; 32], StoredConsensus>, Error> {
-    let term = Term::decode(bin)?;
-    let map = match term {
-        Term::Map(m) => m.map,
-        _ => return Ok(HashMap::new()),
-    };
-    let mut out: HashMap<[u8; 32], StoredConsensus> = HashMap::new();
-    for (k, v) in map.into_iter() {
-        let mh = k.get_binary().ok_or(Error::Missing("mutations_hash"))?.to_vec();
-        let mh: [u8; 32] = mh.try_into().map_err(|_| AttError::InvalidLength("mutations_hash"))?;
-        let inner = v.get_map().ok_or(Error::Missing("consensus_inner"))?;
-        let mask_bytes = inner
-            .get(&Term::Atom(Atom::from("mask")))
-            .and_then(|t| t.get_binary())
-            .map(|b| b.to_vec())
-            .ok_or(Error::Missing("mask"))?;
-        let agg_sig = inner
-            .get(&Term::Atom(Atom::from("aggsig")))
-            .and_then(|t| t.get_binary())
-            .map(|b| b.to_vec())
-            .ok_or(Error::Missing("aggsig"))?;
-        let agg_sig: [u8; 96] =
-            agg_sig.try_into().map_err(|_| AttError::InvalidLength("aggsig")).map_err(Error::Att)?;
-        out.insert(mh, StoredConsensus { mask: bitvec_to_bools(&mask_bytes), agg_sig });
-    }
-    Ok(out)
-}
-
-fn bools_to_bitvec(mask: &[bool]) -> Vec<u8> {
-    let mut out = vec![0u8; (mask.len() + 7) / 8];
-    for (i, &b) in mask.iter().enumerate() {
-        if b {
-            out[i / 8] |= 1 << (7 - (i % 8));
-        }
-    }
-    out
-}
-fn bitvec_to_bools(bytes: &[u8]) -> Vec<bool> {
-    let mut out = Vec::with_capacity(bytes.len() * 8);
-    for (_, byte) in bytes.iter().enumerate() {
-        for bit in 0..8 {
-            let val = (byte >> (7 - bit)) & 1;
-            out.push(val == 1);
-        }
-    }
-    out
+    unimplemented!();
+    // let map = Term::decode(bin)?.get_term_map().unwrap_or_default();
+    //
+    // let mut out: HashMap<[u8; 32], StoredConsensus> = HashMap::new();
+    // for (k, v) in map.into_iter() {
+    //     let mh = k.get_binary().ok_or(Error::Missing("mutations_hash"))?;
+    //     let mh: [u8; 32] = mh.try_into().map_err(|_| Error::InvalidLength("mutations_hash"))?;
+    //     let inner = v.get_term_map().ok_or(Error::Missing("consensus_inner"))?;
+    //     let mask = inner.get_binary("mask").map(bitvec_to_bools).ok_or(Error::Missing("mask"))?;
+    //     let agg_sig = inner.get_binary("aggsig").ok_or(Error::Missing("aggsig"))?;
+    //     out.insert(mh, StoredConsensus { mask, agg_sig });
+    // }
+    // Ok(out)
 }
 
 /// If DB has an attestation for entry_hash signed by a different trainer than current
@@ -238,11 +267,35 @@ pub fn best_consensus_by_entryhash(
     if let Some((k, s, v)) = best { Ok((Some(k), Some(s), Some(v))) } else { Ok((None, None, None)) }
 }
 
-/// Rooted tip helpers (partial)
-pub fn set_rooted_tip(hash: &[u8]) -> Result<(), Error> {
+pub fn set_temporal_height(height: u64) -> Result<(), Error> {
+    Ok(rocksdb::put(CF_SYSCONF, b"temporal_height", &height.to_be_bytes())?)
+}
+
+pub fn get_temporal_height() -> Result<Option<u64>, Error> {
+    match rocksdb::get(CF_SYSCONF, b"temporal_height")? {
+        Some(hb) => Ok(Some(u64::from_be_bytes(hb.try_into().map_err(|_| Error::InvalidLength("temporal_height"))?))),
+        None => Ok(None),
+    }
+}
+
+pub fn set_rooted_tip(hash: &[u8; 32]) -> Result<(), Error> {
     Ok(rocksdb::put(CF_SYSCONF, b"rooted_tip", hash)?)
 }
 
-pub fn rooted_tip() -> Result<Option<Vec<u8>>, Error> {
-    Ok(rocksdb::get(CF_SYSCONF, b"rooted_tip")?)
+pub fn get_rooted_tip() -> Result<Option<[u8; 32]>, Error> {
+    match rocksdb::get(CF_SYSCONF, b"rooted_tip")? {
+        Some(rt) => Ok(Some(rt.try_into().map_err(|_| Error::InvalidLength("rooted_tip"))?)),
+        None => Ok(None),
+    }
+}
+
+pub fn set_temporal_tip(hash: &[u8; 32]) -> Result<(), Error> {
+    Ok(rocksdb::put(CF_SYSCONF, b"rooted_tip", hash)?)
+}
+
+pub fn get_temporal_tip() -> Result<Option<[u8; 32]>, Error> {
+    match rocksdb::get(CF_SYSCONF, b"temporal_tip")? {
+        Some(rt) => Ok(Some(rt.try_into().map_err(|_| Error::InvalidLength("temporal_tip"))?)),
+        None => Ok(None),
+    }
 }

@@ -1,7 +1,7 @@
 use crate::consensus::agg_sig::DST_ATT;
 use crate::misc::bls12_381 as bls;
 use crate::misc::bls12_381::Error as BlsError;
-use crate::misc::utils::{TermExt, get_map_field};
+use crate::misc::utils::{TermExt, TermMap};
 use crate::node::handler::{HandleExt, Instruction};
 use crate::node::proto::ProtoExt;
 use eetf::DecodeError as EtfDecodeError;
@@ -56,10 +56,8 @@ impl Debug for Attestation {
 impl ProtoExt for AttestationBulk {
     type Error = Error;
 
-    fn from_etf_map_validated(map: HashMap<Term, Term>) -> Result<Self, Self::Error> {
-        let list = get_map_field(&map, "attestations_packed")
-            .and_then(|t| t.get_list())
-            .ok_or(Error::Missing("attestations_packed"))?;
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
+        let list = map.get_list("attestations_packed").ok_or(Error::Missing("attestations_packed"))?;
 
         let mut attestations = Vec::with_capacity(list.len());
         for item in list {
@@ -71,10 +69,11 @@ impl ProtoExt for AttestationBulk {
     }
 }
 
+#[async_trait::async_trait]
 impl HandleExt for AttestationBulk {
     type Error = Error;
 
-    fn handle(self) -> Result<Instruction, Self::Error> {
+    async fn handle(self) -> Result<Instruction, Self::Error> {
         // TODO: Handle the attestation bulk
         Ok(Instruction::Noop)
     }

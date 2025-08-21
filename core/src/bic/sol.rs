@@ -1,5 +1,5 @@
 use crate::misc::blake3;
-use crate::misc::utils::{TermExt, get_map_field};
+use crate::misc::utils::{TermExt, TermMap};
 use crate::node::handler::{HandleExt, Instruction};
 use crate::node::proto::ProtoExt;
 use eetf::Term;
@@ -63,17 +63,17 @@ pub enum Solution {
 impl ProtoExt for Solution {
     type Error = Error;
 
-    fn from_etf_map_validated(map: HashMap<Term, Term>) -> Result<Self, Self::Error> {
-        let bin = get_map_field(&map, "sol").and_then(|t| t.get_binary()).ok_or(Error::Missing("sol"))?;
-
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Self::Error> {
+        let bin = map.get_binary("sol").ok_or(Error::Missing("sol"))?;
         Solution::from_etf_validated(bin)
     }
 }
 
+#[async_trait::async_trait]
 impl HandleExt for Solution {
     type Error = Error;
 
-    fn handle(self) -> Result<Instruction, Self::Error> {
+    async fn handle(self) -> Result<Instruction, Self::Error> {
         // Cache the solution
         Ok(Instruction::Noop)
     }

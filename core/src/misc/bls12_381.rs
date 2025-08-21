@@ -102,10 +102,10 @@ pub fn get_public_key(seed: &[u8]) -> Result<[u8; 48], Error> {
 }
 
 /// Sign a message with seed-derived secret key. Returns signature bytes (96 bytes in min_pk).
-pub fn sign(seed: &[u8], message: &[u8], dst: &[u8]) -> Result<Vec<u8>, Error> {
+pub fn sign(seed: &[u8], message: &[u8], dst: &[u8]) -> Result<[u8; 96], Error> {
     let sk = parse_secret_key(seed)?;
     let signature = sign_from_scalar(sk, message, dst)?;
-    Ok(signature.to_bytes().to_vec())
+    Ok(signature.to_bytes())
 }
 
 /// Verify a signature using a compressed G1 public key (48 bytes) and signature (96 bytes).

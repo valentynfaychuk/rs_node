@@ -7,8 +7,8 @@ pub const QUORUM_SINGLE: usize = 1; // Quorum size for single shard
 // --- Node configuration getters (hardcoded for now) ---
 
 /// Root work folder. DBs will be placed under this path.
-pub fn work_folder() -> &'static str {
-    "./target"
+pub fn work_dir() -> &'static str {
+    "run.local"
 }
 
 /// Trainer public key (48 bytes, compressed G1). Hardcoded for now.
@@ -23,9 +23,7 @@ pub fn trainer_pk() -> [u8; 48] {
 pub fn trainer_sk_seed() -> [u8; 32] {
     // NOTE: replace with real secret handling. This is a placeholder.
     [
-        1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 14, 15, 16,
-        17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28, 29, 30, 31, 32,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+        31, 32,
     ]
 }

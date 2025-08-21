@@ -49,8 +49,8 @@ pub enum Error {
 #[derive(Debug)]
 pub struct MessageV2 {
     pub version: String,
-    pub pk: Vec<u8>,
-    pub signature: Vec<u8>,
+    pub pk: [u8; 48],
+    pub signature: [u8; 96],
     pub shard_index: u16,
     pub shard_total: u16,
     pub ts_nano: u64,
@@ -117,13 +117,11 @@ impl MessageV2 {
     fn try_from_inner(bin: &[u8]) -> Result<Self, Error> {
         // Must be at least header length
         if bin.len() < 3 + 3 + 1 + 48 + 96 + 2 + 2 + 8 + 4 {
-            crate::metrics::inc_v2_parsing_errors();
             return Err(Error::WrongLength(bin.len()));
         }
 
         // Magic
         if &bin[0..3] != b"AMA" {
-            crate::metrics::inc_v2_parsing_errors();
             return Err(Error::InvalidMagic);
         }
 
@@ -133,7 +131,6 @@ impl MessageV2 {
         // Next is 7 zero bits and 1 flag bit, total 1 byte
         let flag_byte = bin[6];
         if flag_byte & 0b11111110 != 0 {
-            crate::metrics::inc_v2_parsing_errors();
             return Err(Error::InvalidFlags(flag_byte));
         }
 
@@ -143,11 +140,11 @@ impl MessageV2 {
 
         let pk_start = 7;
         let pk_end = pk_start + 48;
-        let pk = bin[pk_start..pk_end].to_vec();
+        let pk = bin[pk_start..pk_end].try_into().expect("pk should be 48 bytes");
 
         let sig_start = pk_end;
         let sig_end = sig_start + 96;
-        let signature = bin[sig_start..sig_end].to_vec();
+        let signature = bin[sig_start..sig_end].try_into().expect("signature should be 96 bytes");
 
         let shard_index = u16::from_be_bytes(bin[sig_end..sig_end + 2].try_into().unwrap());
         let shard_total = u16::from_be_bytes(bin[sig_end + 2..sig_end + 4].try_into().unwrap());
