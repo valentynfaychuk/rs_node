@@ -2,9 +2,9 @@ use crate::config;
 use crate::consensus;
 use crate::consensus::attestation::Attestation;
 use crate::consensus::entry::Entry;
-use crate::consensus::entry_gen;
+use crate::consensus::genesis;
 use crate::misc::rocksdb;
-use crate::misc::utils::{bools_to_bitvec, get_unix_millis_now};
+use crate::misc::utils::{TermExt, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
 use eetf::{Atom, Binary, Term};
 use std::collections::HashMap;
 // TODO: make the database trait that the fabric will use
@@ -18,11 +18,17 @@ pub enum Error {
     #[error(transparent)]
     EtfEncode(#[from] eetf::EncodeError),
     #[error(transparent)]
+    BinDecode(#[from] bincode::error::DecodeError),
+    #[error(transparent)]
+    BinEncode(#[from] bincode::error::EncodeError),
+    // #[error(transparent)]
+    // Entry(#[from] consensus::entry::Error),
+    #[error(transparent)]
     Att(#[from] consensus::attestation::Error),
-    #[error("invalid length: {0}")]
-    InvalidLength(&'static str),
-    #[error("missing dependency: {0}")]
-    Missing(&'static str),
+    #[error("invalid kv cell: {0}")]
+    KvCell(&'static str),
+    #[error("invalid etf: {0}")]
+    BadEtf(&'static str),
 }
 
 const CF_DEFAULT: &str = "default";
@@ -74,7 +80,7 @@ pub fn entries_by_height(height: u64) -> Result<Vec<Vec<u8>>, Error> {
 
 /// Insert the genesis entry and initial state markers if not present yet
 pub fn insert_genesis() -> Result<(), Error> {
-    let genesis_entry = consensus::entry_gen::get();
+    let genesis_entry = genesis::get_gen_entry();
     if rocksdb::get(CF_DEFAULT, &genesis_entry.hash)?.is_some() {
         return Ok(()); // already inserted, no-op
     }
@@ -84,11 +90,11 @@ pub fn insert_genesis() -> Result<(), Error> {
     let hash = genesis_entry.hash;
     let height = genesis_entry.header.height;
     let slot = genesis_entry.header.slot;
-    let entry_bin: Vec<u8> = genesis_entry.try_into().map_err(|_| Error::Missing("genesis_entry"))?;
+    let entry_bin: Vec<u8> = genesis_entry.try_into()?;
     insert_entry(&hash, height, slot, &entry_bin, get_unix_millis_now())?;
 
     // insert genesis attestation aggregate (no-op until full trainers implemented)
-    let att = entry_gen::attestation();
+    let att = genesis::attestation();
     aggregate_attestation(&att)?;
 
     // set rooted_tip = genesis.hash and temporal_height = 0
@@ -143,20 +149,24 @@ fn pack_consensus_map(map: &HashMap<[u8; 32], StoredConsensus>) -> Result<Vec<u8
     Ok(out)
 }
 
-fn unpack_consensus_map(_bin: &[u8]) -> Result<HashMap<[u8; 32], StoredConsensus>, Error> {
-    unimplemented!();
-    // let map = Term::decode(bin)?.get_term_map().unwrap_or_default();
-    //
-    // let mut out: HashMap<[u8; 32], StoredConsensus> = HashMap::new();
-    // for (k, v) in map.into_iter() {
-    //     let mh = k.get_binary().ok_or(Error::Missing("mutations_hash"))?;
-    //     let mh: [u8; 32] = mh.try_into().map_err(|_| Error::InvalidLength("mutations_hash"))?;
-    //     let inner = v.get_term_map().ok_or(Error::Missing("consensus_inner"))?;
-    //     let mask = inner.get_binary("mask").map(bitvec_to_bools).ok_or(Error::Missing("mask"))?;
-    //     let agg_sig = inner.get_binary("aggsig").ok_or(Error::Missing("aggsig"))?;
-    //     out.insert(mh, StoredConsensus { mask, agg_sig });
-    // }
-    // Ok(out)
+fn unpack_consensus_map(bin: &[u8]) -> Result<HashMap<[u8; 32], StoredConsensus>, Error> {
+    let term = Term::decode(bin)?;
+    let Some(map) = TermExt::get_term_map(&term) else { return Ok(HashMap::new()) };
+
+    let mut out: HashMap<[u8; 32], StoredConsensus> = HashMap::new();
+    for (k, v) in map.0.into_iter() {
+        // key: mutations_hash (binary 32)
+        let mh_bytes = TermExt::get_binary(&k).ok_or(Error::BadEtf("mutations_hash"))?;
+        let mh: [u8; 32] = mh_bytes.try_into().map_err(|_| Error::KvCell("mutations_hash"))?;
+
+        // value: map with keys mask (bitstring), agg_sig (binary)
+        let inner = TermExt::get_term_map(&v).ok_or(Error::BadEtf("consensus_inner"))?;
+        let mask = inner.get_binary("mask").map(bitvec_to_bools).ok_or(Error::BadEtf("mask"))?;
+        let agg_sig = inner.get_binary("aggsig").ok_or(Error::BadEtf("aggsig"))?;
+
+        out.insert(mh, StoredConsensus { mask, agg_sig });
+    }
+    Ok(out)
 }
 
 /// If DB has an attestation for entry_hash signed by a different trainer than current
@@ -170,7 +180,7 @@ pub fn get_or_resign_my_attestation(entry_hash: &[u8; 32]) -> Result<Option<Atte
     }
     println!("imported database, resigning attestation {}", bs58::encode(entry_hash).into_string());
     let pk = config::trainer_pk();
-    let sk = config::trainer_sk_seed();
+    let sk = config::trainer_sk();
     let new_a = Attestation::sign_with(&pk, &sk, entry_hash, &att.mutations_hash)?;
     let packed = new_a.to_etf_bin()?;
     rocksdb::put(CF_MY_ATTESTATION_FOR_ENTRY, entry_hash, packed.as_slice())?;
@@ -228,12 +238,21 @@ pub fn insert_consensus(
     if score < 0.67 {
         return Ok(());
     }
-    // TODO: trainers and best_by_weight are not implemented, we optimistically accept if threshold is met
 
     let mut map = match rocksdb::get(CF_CONSENSUS_BY_ENTRYHASH, &entry_hash)? {
         Some(bin) => unpack_consensus_map(&bin)?,
         None => HashMap::new(),
     };
+
+    // Only update if this consensus is stronger than previously stored for this mutations_hash
+    if let Some(existing) = map.get(&mutations_hash) {
+        let old_cnt = existing.mask.iter().filter(|&&b| b).count();
+        let new_cnt = consensus_mask.iter().filter(|&&b| b).count();
+        if new_cnt <= old_cnt {
+            return Ok(());
+        }
+    }
+
     map.insert(mutations_hash, StoredConsensus { mask: consensus_mask, agg_sig: consensus_agg_sig });
     let packed = pack_consensus_map(&map)?;
     rocksdb::put(CF_CONSENSUS_BY_ENTRYHASH, &entry_hash, &packed)?;
@@ -273,7 +292,7 @@ pub fn set_temporal_height(height: u64) -> Result<(), Error> {
 
 pub fn get_temporal_height() -> Result<Option<u64>, Error> {
     match rocksdb::get(CF_SYSCONF, b"temporal_height")? {
-        Some(hb) => Ok(Some(u64::from_be_bytes(hb.try_into().map_err(|_| Error::InvalidLength("temporal_height"))?))),
+        Some(hb) => Ok(Some(u64::from_be_bytes(hb.try_into().map_err(|_| Error::KvCell("temporal_height"))?))),
         None => Ok(None),
     }
 }
@@ -284,18 +303,18 @@ pub fn set_rooted_tip(hash: &[u8; 32]) -> Result<(), Error> {
 
 pub fn get_rooted_tip() -> Result<Option<[u8; 32]>, Error> {
     match rocksdb::get(CF_SYSCONF, b"rooted_tip")? {
-        Some(rt) => Ok(Some(rt.try_into().map_err(|_| Error::InvalidLength("rooted_tip"))?)),
+        Some(rt) => Ok(Some(rt.try_into().map_err(|_| Error::KvCell("rooted_tip"))?)),
         None => Ok(None),
     }
 }
 
 pub fn set_temporal_tip(hash: &[u8; 32]) -> Result<(), Error> {
-    Ok(rocksdb::put(CF_SYSCONF, b"rooted_tip", hash)?)
+    Ok(rocksdb::put(CF_SYSCONF, b"temporal_tip", hash)?)
 }
 
 pub fn get_temporal_tip() -> Result<Option<[u8; 32]>, Error> {
     match rocksdb::get(CF_SYSCONF, b"temporal_tip")? {
-        Some(rt) => Ok(Some(rt.try_into().map_err(|_| Error::InvalidLength("temporal_tip"))?)),
+        Some(rt) => Ok(Some(rt.try_into().map_err(|_| Error::KvCell("temporal_tip"))?)),
         None => Ok(None),
     }
 }

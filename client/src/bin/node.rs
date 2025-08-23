@@ -3,20 +3,19 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
-use core::node::ReedSolomonReassembler;
-use core::node::msg_v2::MessageV2;
-use core::node::proto::{Instruction, from_etf_bin};
-use core::test_data::ping::PING;
+use ama_core::node::ReedSolomonReassembler;
+use ama_core::node::msg_v2::MessageV2;
+use ama_core::node::proto::{Instruction, from_etf_bin};
+use ama_core::test_data::ping::PING;
+use client::init_tracing;
 
 use plot::{serve, state::AppState};
-
-mod tracing;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     // Initialize tracing subscriber for logging.
-    tracing::init_tracing();
-    core::init(None).await.expect("core init");
+    init_tracing();
+    ama_core::init(None).await.expect("core init");
 
     // Target UDP address of an Amadeus node.
     let addr: SocketAddr =
@@ -66,7 +65,7 @@ async fn recv_loop(
         match timeout(Duration::from_secs(10), socket.recv_from(&mut buf)).await {
             Err(_) => {
                 // If no packets for a while, print metrics
-                println!("{}", core::metrics::get_metrics());
+                println!("{}", ama_core::metrics::get_metrics());
                 continue;
             }
             Ok(Err(e)) => return Err(e),

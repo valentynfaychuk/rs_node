@@ -1,10 +1,10 @@
 [package]
-name = "core"
+name = "ama_core"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "core"
+name = "ama_core"
 path = "src/lib.rs"
 crate-type = ["rlib"]
 doctest = false
@@ -21,7 +21,7 @@ anyhow = "1.0.98"
 reed-solomon-simd = "3.1.0"
 aes-gcm = "0.10.3"
 sha2 = "0.10.9"
-bincode = "2.0.1"
+bincode = { version = "2.0.1", features = ["derive"] }
 blake3 = "1.8.2"
 bls12_381 = "0.8.0"
 blst = "0.3.15"
@@ -32,6 +32,9 @@ rocksdb = { version = "0.24.0", default-features = false, features = ["lz4", "sn
 tracing = { version = "0.1.41", default-features = false, features = ["std", "attributes"] }
 url = "2.5.4"
 async-trait = "0.1.89"
+wasmer = { version = "4.4.0", features = ["cranelift"] }
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
 
 [features]
 rayon = ["blake3/rayon"] # quick way to enable rayon, may not need it

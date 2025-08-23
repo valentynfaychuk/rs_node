@@ -183,14 +183,14 @@ impl Attestation {
     /// NOTE: we intentionally do not read global env here, caller supplies keys
     pub fn sign_with(
         pk_g1_48: &[u8],
-        sk_seed: &[u8],
+        trainer_sk: &[u8],
         entry_hash: &[u8; 32],
         mutations_hash: &[u8; 32],
     ) -> Result<Self, Error> {
         let mut msg = [0u8; 64];
         msg[..32].copy_from_slice(entry_hash);
         msg[32..].copy_from_slice(mutations_hash);
-        let signature = bls::sign(sk_seed, &msg, DST_ATT)?;
+        let signature = bls::sign(trainer_sk, &msg, DST_ATT)?;
         let signer: [u8; 48] = pk_g1_48.try_into().map_err(|_| Error::InvalidLength("signer"))?;
         let signature: [u8; 96] = signature.as_slice().try_into().map_err(|_| Error::InvalidLength("signature"))?;
         Ok(Self { entry_hash: *entry_hash, mutations_hash: *mutations_hash, signer, signature })

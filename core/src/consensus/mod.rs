@@ -3,8 +3,8 @@ pub mod agg_sig;
 pub mod attestation;
 pub mod consensus;
 pub mod entry;
-pub mod entry_gen;
 pub mod fabric;
+pub mod genesis;
 pub mod kv;
 pub mod tx;
 

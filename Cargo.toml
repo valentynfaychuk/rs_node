@@ -4,7 +4,7 @@ resolver = "3"
 members = ["core", "client", "plot"]
 
 [workspace.dependencies]
-core = { path = "core" }
+ama_core = { path = "core" }
 plot = { path = "plot" }
 
 [patch.crates-io]

@@ -310,15 +310,57 @@ pub fn pack(_txu: &TxU) -> Vec<u8> {
 
 /// Build and sign a transaction like Elixir TX.build/7. TODO: needs VanillaSer and BLS signing.
 pub fn build(
-    _sk: &[u8],
-    _contract: &[u8],
-    _function: &str,
-    _args: &[Vec<u8>],
-    _nonce: Option<i64>,
-    _attached_symbol: Option<&[u8]>,
-    _attached_amount: Option<&[u8]>,
+    sk: &[u8],
+    contract: &[u8],
+    function: &str,
+    args: &[Vec<u8>],
+    nonce: Option<i64>,
+    attached_symbol: Option<&[u8]>,
+    attached_amount: Option<&[u8]>,
 ) -> Vec<u8> {
-    unimplemented!("TODO: build and sign tx packed as ETF");
+    // derive signer public key from secret key
+    let signer_pk = crate::misc::bls12_381::get_public_key(sk).expect("invalid secret key");
+
+    // choose nonce: Elixir uses :os.system_time(:nanosecond)
+    let nonce_val: i128 = match nonce {
+        Some(n) => n as i128,
+        None => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            now.as_nanos() as i128
+        }
+    };
+
+    // Build action map
+    let mut action_map = BTreeMap::new();
+    action_map.insert(Value::Bytes(b"op".to_vec()), Value::Bytes(b"call".to_vec()));
+    action_map.insert(Value::Bytes(b"contract".to_vec()), Value::Bytes(contract.to_vec()));
+    action_map.insert(Value::Bytes(b"function".to_vec()), Value::Bytes(function.as_bytes().to_vec()));
+    let args_list = Value::List(args.iter().map(|a| Value::Bytes(a.clone())).collect());
+    action_map.insert(Value::Bytes(b"args".to_vec()), args_list);
+    if let (Some(sym), Some(amt)) = (attached_symbol, attached_amount) {
+        action_map.insert(Value::Bytes(b"attached_symbol".to_vec()), Value::Bytes(sym.to_vec()));
+        action_map.insert(Value::Bytes(b"attached_amount".to_vec()), Value::Bytes(amt.to_vec()));
+    }
+
+    // Build inner tx map
+    let mut tx_map = BTreeMap::new();
+    tx_map.insert(Value::Bytes(b"signer".to_vec()), Value::Bytes(signer_pk.to_vec()));
+    tx_map.insert(Value::Bytes(b"nonce".to_vec()), Value::Int(nonce_val));
+    tx_map.insert(Value::Bytes(b"actions".to_vec()), Value::List(vec![Value::Map(action_map)]));
+
+    let tx_encoded = vanilla_ser::encode(&Value::Map(tx_map));
+    let hash = crate::misc::blake3::hash(&tx_encoded);
+
+    // Sign hash with DST_TX
+    let signature = crate::misc::bls12_381::sign(sk, &hash, DST_TX).expect("failed to sign tx");
+
+    // Build outer map
+    let mut outer_map = BTreeMap::new();
+    outer_map.insert(Value::Bytes(b"tx_encoded".to_vec()), Value::Bytes(tx_encoded));
+    outer_map.insert(Value::Bytes(b"hash".to_vec()), Value::Bytes(hash.to_vec()));
+    outer_map.insert(Value::Bytes(b"signature".to_vec()), Value::Bytes(signature.to_vec()));
+
+    vanilla_ser::encode(&Value::Map(outer_map))
 }
 
 /// Chain-level validity checks (nonce, balance, epoch). TODO: requires Consensus state.

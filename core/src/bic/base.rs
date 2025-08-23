@@ -79,15 +79,15 @@ pub mod wasm {
         pub exec_used: Option<u64>,
     }
 
-    /// Invoke contract bytecode with the given function and args.
-    /// TODO: implement with a WASM runtime and proper ABI for env, bytecode, and args.
+    /// Invoke contract bytecode with the given function and args using the WASM runtime bridge.
     pub fn call(
-        _env: &crate::bic::epoch::CallEnv,
-        _bytecode: &[u8],
-        _function: &str,
-        _args: &[Vec<u8>],
+        env: &crate::bic::epoch::CallEnv,
+        bytecode: &[u8],
+        function: &str,
+        args: &[Vec<u8>],
     ) -> WasmCallResult {
-        unimplemented!("TODO: BIC.Base.WASM.call requires WASM runtime integration");
+        // Delegate to bridge implementation (sandboxed execution)
+        crate::bic::base_wasm::call(env, bytecode, function, args)
     }
 }
 

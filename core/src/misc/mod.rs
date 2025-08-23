@@ -5,3 +5,4 @@ pub mod reed_solomon;
 pub mod rocksdb;
 pub mod utils;
 pub mod vanilla_ser;
+pub mod mnesiakv;

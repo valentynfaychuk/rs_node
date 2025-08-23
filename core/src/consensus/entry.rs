@@ -156,14 +156,14 @@ pub struct Entry {
 }
 
 impl TryFrom<&[u8]> for Entry {
-    type Error = Error;
+    type Error = bincode::error::DecodeError;
 
     fn try_from(bin: &[u8]) -> Result<Self, Self::Error> {
         let config = bincode::config::standard();
         let (entry, len): (Self, usize) = bincode::decode_from_slice(bin, config)?;
 
         if len != bin.len() {
-            return Err(Error::BadEtf("entry_bin_len"));
+            return Err(bincode::error::DecodeError::Other("entry bin length mismatch"));
         }
 
         Ok(entry)
@@ -171,7 +171,7 @@ impl TryFrom<&[u8]> for Entry {
 }
 
 impl TryInto<Vec<u8>> for Entry {
-    type Error = Error;
+    type Error = bincode::error::EncodeError;
 
     fn try_into(self) -> Result<Vec<u8>, Self::Error> {
         let config = bincode::config::standard();
@@ -196,7 +196,7 @@ impl Proto for Entry {
 
     fn to_etf_bin(&self) -> Result<Vec<u8>, proto::Error> {
         // encode entry as bincode first
-        let entry_bin: Vec<u8> = self.clone().try_into().map_err(|e: Error| proto::Error::Entry(e))?;
+        let entry_bin: Vec<u8> = self.clone().try_into().map_err(|_| proto::Error::BadEtf("entry"))?;
 
         let mut m = HashMap::new();
         m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));

@@ -7,8 +7,8 @@ use blst::min_pk::{PublicKey as BlsPublicKey, SecretKey as BlsSecretKey, Signatu
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("invalid seed")]
-    InvalidSeed,
+    #[error("invalid secret key")]
+    InvalidSecretKey,
     #[error("invalid point")]
     InvalidPoint,
     #[error("invalid signature")]
@@ -19,20 +19,21 @@ pub enum Error {
     ZeroSizedInput,
 }
 
-/// Parse a secret key from seed, accepts either 64 or 32 bytes
-fn parse_secret_key(seed: &[u8]) -> Result<Scalar, Error> {
-    if let Ok(bytes_64) = <&[u8; 64]>::try_from(seed) {
-        return Ok(Scalar::from_bytes_wide(bytes_64));
+/// Parse a secret key from raw bytes, accepts either 64 or 32 bytes
+/// For 64-byte keys, use first 32 bytes directly as secret key (matches Elixir BlsEx approach)
+fn parse_secret_key(sk_bytes: &[u8]) -> Result<BlsSecretKey, Error> {
+    // For 64-byte secret keys: use first 32 bytes as the actual secret key
+    // This matches the Elixir BlsEx library behavior more closely
+    if let Ok(bytes_64) = <&[u8; 64]>::try_from(sk_bytes) {
+        let mut sk_32 = [0u8; 32];
+        sk_32.copy_from_slice(&bytes_64[..32]);
+        return BlsSecretKey::from_bytes(&sk_32).map_err(|_| Error::InvalidSecretKey);
     }
-    if let Ok(bytes_32) = <&[u8; 32]>::try_from(seed) {
-        let ct_scalar = Scalar::from_bytes(bytes_32);
-        if ct_scalar.is_some().unwrap_u8() == 1 {
-            return Ok(ct_scalar.unwrap());
-        } else {
-            return Err(Error::InvalidSeed);
-        }
+    // For 32-byte secret keys: use directly
+    if let Ok(bytes_32) = <&[u8; 32]>::try_from(sk_bytes) {
+        return BlsSecretKey::from_bytes(bytes_32).map_err(|_| Error::InvalidSecretKey);
     }
-    Err(Error::InvalidSeed)
+    Err(Error::InvalidSecretKey)
 }
 
 fn g1_projective_is_valid(projective: &G1Projective) -> bool {
@@ -84,27 +85,34 @@ fn parse_signature(bytes: &[u8]) -> Result<G2Projective, Error> {
     }
 }
 
-fn sign_from_scalar(scalar: Scalar, msg: &[u8], dst: &[u8]) -> Result<BlsSignature, Error> {
-    // convert Scalar to big-endian bytes for blst SecretKey
-    let mut sk_be = scalar.to_bytes();
-    sk_be.reverse();
-    let sk = BlsSecretKey::from_bytes(&sk_be).map_err(|_| Error::InvalidSeed)?;
+fn sign_from_secret_key(sk: BlsSecretKey, msg: &[u8], dst: &[u8]) -> Result<BlsSignature, Error> {
     Ok(sk.sign(msg, dst, &[]))
 }
 
 // public API
 
-/// Derive compressed G1 public key (48 bytes) from seed (32 or 64 bytes)
-pub fn get_public_key(seed: &[u8]) -> Result<[u8; 48], Error> {
-    let sk = parse_secret_key(seed)?;
-    let g1 = G1Projective::generator() * sk;
-    Ok(g1.to_affine().to_compressed())
+/// Derive compressed G1 public key (48 bytes) from secret key (32 or 64 bytes)
+pub fn get_public_key(sk_bytes: &[u8]) -> Result<[u8; 48], Error> {
+    let sk = parse_secret_key(sk_bytes)?;
+    let pk = sk.sk_to_pk();
+    Ok(pk.to_bytes())
 }
 
-/// Sign a message with seed-derived secret key, returns signature bytes (96 bytes in min_pk)
-pub fn sign(seed: &[u8], message: &[u8], dst: &[u8]) -> Result<[u8; 96], Error> {
-    let sk = parse_secret_key(seed)?;
-    let signature = sign_from_scalar(sk, message, dst)?;
+pub fn generate_sk() -> Result<[u8; 64], Error> {
+    let ikm: [u8; 32] = rand::random();
+    let sk = BlsSecretKey::key_gen(&ikm, &[]).expect("should not fail");
+    let sk_bytes = sk.to_bytes();
+    println!("Secret key (32 bytes): {}", bs58::encode(sk_bytes).into_string());
+    // Return as 64-byte array (padding with zeros to match format)
+    let mut result = [0u8; 64];
+    result[0..32].copy_from_slice(&sk_bytes);
+    Ok(result)
+}
+
+/// Sign a message with secret key, returns signature bytes (96 bytes in min_pk)
+pub fn sign(sk_bytes: &[u8], message: &[u8], dst: &[u8]) -> Result<[u8; 96], Error> {
+    let sk = parse_secret_key(sk_bytes)?;
+    let signature = sign_from_secret_key(sk, message, dst)?;
     Ok(signature.to_bytes())
 }
 
@@ -165,10 +173,13 @@ where
 }
 
 /// Compute Diffie-Hellman shared secret: pk_g1 * sk -> compressed G1 (48 bytes).
-pub fn get_shared_secret(public_key: &[u8], seed: &[u8]) -> Result<[u8; 48], Error> {
-    let sk = parse_secret_key(seed)?;
+pub fn get_shared_secret(public_key: &[u8], sk_bytes: &[u8]) -> Result<[u8; 48], Error> {
+    let sk = parse_secret_key(sk_bytes)?;
     let pk_g1 = parse_public_key(public_key)?; // validates pk
-    Ok((pk_g1 * sk).to_affine().to_compressed())
+    // Convert blst SecretKey to scalar for elliptic curve multiplication
+    let sk_scalar_bytes = sk.to_bytes();
+    let sk_scalar = Scalar::from_bytes(&sk_scalar_bytes).unwrap();
+    Ok((pk_g1 * sk_scalar).to_affine().to_compressed())
 }
 
 /// Validate a compressed G1 public key.

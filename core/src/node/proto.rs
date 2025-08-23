@@ -258,7 +258,7 @@ impl Ping {
 
         // get signing keys from config
         let pk = config::trainer_pk();
-        let sk_seed = config::trainer_sk_seed();
+        let trainer_sk = config::trainer_sk();
 
         // create message metadata
         let ts_nano = get_unix_nanos_now() as u64;
@@ -272,7 +272,7 @@ impl Ping {
 
         // create message to sign: compressed payload
         let signature =
-            bls::sign(&sk_seed, &compressed_payload, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
+            bls::sign(&trainer_sk, &compressed_payload, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
 
         Ok(MessageV2 {
             version,
@@ -313,7 +313,7 @@ impl Ping {
 
         // get signing keys from config
         let pk = config::trainer_pk();
-        let sk_seed = config::trainer_sk_seed();
+        let trainer_sk = config::trainer_sk();
 
         // create message metadata
         let ts_nano = std::time::SystemTime::now()
@@ -330,7 +330,7 @@ impl Ping {
 
         // create message to sign: compressed payload
         let signature =
-            bls::sign(&sk_seed, &compressed_payload, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
+            bls::sign(&trainer_sk, &compressed_payload, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
 
         Ok(MessageV2 {
             version,
@@ -366,7 +366,7 @@ impl Ping {
 
         // get signing keys from config
         let pk = config::trainer_pk();
-        let sk_seed = config::trainer_sk_seed();
+        let trainer_sk = config::trainer_sk();
 
         let ts_nano = get_unix_nanos_now() as u64; // TODO: check if this is fine
 
@@ -379,7 +379,7 @@ impl Ping {
         // create a MessageV2 for each shard
         for (shard_index, shard_data) in shards {
             // sign the shard data
-            let signature = bls::sign(&sk_seed, &shard_data, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
+            let signature = bls::sign(&trainer_sk, &shard_data, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
 
             let msg = MessageV2 {
                 version: version.clone(),

@@ -84,7 +84,7 @@ impl ReedSolomonReassembler {
         version: &str,
     ) -> Result<MessageV2, Error> {
         let pk = crate::config::trainer_pk();
-        let sk_seed = crate::config::trainer_sk_seed();
+        let trainer_sk = crate::config::trainer_sk();
 
         // sign Blake3(pk || payload) per reference implementation
         let mut hasher = blake3::Hasher::new();
@@ -92,7 +92,7 @@ impl ReedSolomonReassembler {
         hasher.update(&payload);
         let msg_hash = hasher.finalize();
 
-        let signature = bls12_381::sign(&sk_seed, &msg_hash, DST_NODE)?;
+        let signature = bls12_381::sign(&trainer_sk, &msg_hash, DST_NODE)?;
 
         Ok(MessageV2 {
             version: version.to_string(),

@@ -132,7 +132,7 @@ pub fn attestation() -> Attestation {
     }
 }
 
-pub fn get() -> Entry {
+pub fn get_gen_entry() -> Entry {
     let header = EntryHeader {
         slot: 0,
         height: 0,

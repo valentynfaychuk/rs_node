@@ -31,9 +31,23 @@ brew install rocksdb # or on MacOS (this will install `rocksdb_ldb` and `rocksdb
 
 ## Running Light Client
 
+The light client offers three binaries:
+
+- node
+- cli
+- log
+
 ```bash
-# When running on the same machine as the running node, UDP_ADDR=127.0.0.1:36969 is added by default
-UDP_ADDR=127.0.0.1:36969 cargo run --package client
+# Node is an Amadeus node that receives and handles messages
+# UDP_ADDR is the address of target Amadeus node, default it 127.0.0.1:36969
+UDP_ADDR=127.0.0.1:36969 cargo run --package client --bin node
+
+# CLI is a client that can deploy a contract or send transactions
+cargo run --package client --bin cli -- gensk trainer-sk
+cargo run --package client --bin cli -- getpk trainer-sk
+
+# Log is a utility that captures raw UDP diagrams for further replay
+cargo run --package client --bin log
 ```
 
 ## Running a PCAP simulation

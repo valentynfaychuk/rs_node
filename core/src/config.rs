@@ -8,7 +8,7 @@ pub const QUORUM_SINGLE: usize = 1; // quorum size for single shard
 
 struct ClientConfig {
     //pub directory: ,
-    pub sk_seed: [u8; 32],
+    pub sk: [u8; 64],
 }
 
 /// Root work folder, DBs will be placed under this path
@@ -24,12 +24,71 @@ pub fn trainer_pk() -> [u8; 48] {
     ]
 }
 
-/// Trainer secret seed used for BLS signing, hardcoded for now (32 bytes)
-pub fn trainer_sk_seed() -> [u8; 32] {
-    // owner_sk_seed
-    // NOTE: replace with real secret handling, this is a placeholder
-    [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-        31, 32,
-    ]
+/// Trainer secret key used for BLS signing (64 bytes). Persists to file as Base58.
+pub fn trainer_sk() -> [u8; 64] {
+    use rand::RngCore;
+    use std::fs;
+    use std::path::PathBuf;
+
+    // Resolve candidate paths
+    // 1) ~/.cache/amadeusd/sk
+    // 2) $WORKFOLDER/sk (relative work_dir())
+    let mut home_path: Option<PathBuf> = None;
+    if let Ok(home) = std::env::var("HOME") {
+        let mut p = PathBuf::from(home);
+        p.push(".cache");
+        p.push("amadeusd");
+        p.push("sk");
+        home_path = Some(p);
+    }
+    let mut work_path = PathBuf::from(work_dir());
+    work_path.push("sk");
+
+    // Helper: try read Base58 secret key from file
+    fn read_b58_sk(path: &PathBuf) -> Option<[u8; 64]> {
+        let s = fs::read_to_string(path).ok()?;
+        let s_trim = s.trim();
+        match bs58::decode(s_trim).into_vec() {
+            Ok(bytes) => match <[u8; 64]>::try_from(bytes.as_slice()) {
+                Ok(arr) => Some(arr),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        }
+    }
+
+    // Try to read from home cache first, then work folder
+    if let Some(home) = &home_path {
+        if home.exists() {
+            if let Some(arr) = read_b58_sk(home) {
+                return arr;
+            }
+        }
+    }
+    if work_path.exists() {
+        if let Some(arr) = read_b58_sk(&work_path) {
+            return arr;
+        }
+    }
+
+    // Not found or invalid: generate new 64-byte secret key, save as Base58, print pk
+    let mut sk = [0u8; 64];
+    let mut rng = rand::rngs::OsRng;
+    rng.fill_bytes(&mut sk);
+
+    // Derive public key and print message
+    let pk = crate::misc::bls12_381::get_public_key(&sk).unwrap_or([0u8; 48]);
+    let pk_b58 = bs58::encode(pk).into_string();
+    println!("generated random sk, your pk is {}", pk_b58);
+
+    // Choose save path: prefer home cache if available, else work folder
+    let save_path = if let Some(home) = home_path { home } else { work_path };
+
+    if let Some(parent) = save_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let b58 = bs58::encode(sk).into_string();
+    let _ = fs::write(&save_path, b58);
+
+    sk
 }
