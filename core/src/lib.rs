@@ -7,7 +7,8 @@ pub mod genesis;
 pub mod metrics;
 pub mod misc;
 pub mod node;
-pub mod test_data;
+pub mod wasm;
+
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {

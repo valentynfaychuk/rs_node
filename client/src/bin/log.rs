@@ -1,7 +1,7 @@
 use client::UdpLoggedDatagram;
 use std::env;
 use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io::Write;
 use std::net::UdpSocket;
 
 fn usage_and_exit() -> ! {
@@ -9,9 +9,8 @@ fn usage_and_exit() -> ! {
         r#"
 Usage: log <filename> <frames_count>
 
-Binds UDP 0.0.0.0:36969 and appends every received datagram as raw bytes to <filename>.log
-Stops after recording <frames_count> datagrams
-Examples: cargo run -p client --bin log -- capture 100"#
+Binds UDP 0.0.0.0:36969 and appends every received datagram as raw bytes to <filename>
+Stops after recording <frames_count> datagrams"#
     );
     std::process::exit(1);
 }
@@ -32,7 +31,7 @@ fn parse_args() -> (String, usize) {
         }
     };
 
-    (format!("{base}.log"), frames)
+    (format!("{base}"), frames)
 }
 
 fn main() -> anyhow::Result<()> {

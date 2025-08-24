@@ -29,25 +29,44 @@ git clone https://github.com/facebook/rocksdb.git && cd rocksdb && make ldb && m
 brew install rocksdb # or on MacOS (this will install `rocksdb_ldb` and `rocksdb_sst_dump`)
 ```
 
-## Running Light Client
+## Running
 
-The light client offers three binaries:
-
-- node
-- cli
-- log
+Running is easy, check `.cargo/config.toml` for command aliases:
 
 ```bash
 # Node is an Amadeus node that receives and handles messages
-# UDP_ADDR is the address of target Amadeus node, default it 127.0.0.1:36969
-UDP_ADDR=127.0.0.1:36969 cargo run --package client --bin node
+# add UDP_ADDR for peer Amadeus node, default 127.0.0.1:36969
+cargo node
 
 # CLI is a client that can deploy a contract or send transactions
-cargo run --package client --bin cli -- gensk trainer-sk
-cargo run --package client --bin cli -- getpk trainer-sk
+cargo cli gensk trainer-sk
+cargo cli getpk trainer-sk
 
 # Log is a utility that captures raw UDP diagrams for further replay
-cargo run --package client --bin log
+cargo log
+```
+
+### Running tests
+
+Tests are work in progress and some of the KV unittests are flaky.
+Don't freak out if they fail sometimes, just re-run them.
+
+```bash
+# WASM tests rely on .wasm contracts, you need to compile them first
+wat2wasm wasm/simple_counter.wat -o wasm/simple_counter.wasm
+wat2wasm wasm/token_contract.wat -o wasm/token_contract.wasm
+
+# The test-all is also an alias
+cargo test-all
+```
+
+## Running a LOG simulation
+
+```bash
+# Step 1. Run the logger to capture the traffic
+cargo log capture 10000
+# Step 2. Tell node to use capture instead of a socket
+UDP_REPLAY=capture cargo node
 ```
 
 ## Running a PCAP simulation
@@ -87,7 +106,7 @@ but the light client processes 10001 because it also receives its own ping:
 ```bash
 # HELP amadeus_protocol_messages_total Total number of protocol messages handled by type
 # TYPE amadeus_protocol_messages_total counter
-amadeus_protocol_messages_total{type="ping"} 8657
+amadeus_protocol_messages_total{type="ping"} 8656
 amadeus_protocol_messages_total{type="pong"} 0
 amadeus_protocol_messages_total{type="who_are_you"} 0
 amadeus_protocol_messages_total{type="txpool"} 0
@@ -107,7 +126,7 @@ amadeus_protocol_messages_total{type="solicit_entry2"} 0
 
 # HELP amadeus_packets_total Total number of UDP packets received
 # TYPE amadeus_packets_total counter
-amadeus_udp_packets_total 10001
+amadeus_udp_packets_total 10000
 
 # HELP amadeus_packet_errors_total Total number of packet processing errors by type
 # TYPE amadeus_packet_errors_total counter

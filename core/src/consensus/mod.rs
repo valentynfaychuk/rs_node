@@ -49,20 +49,59 @@ pub fn trainers_for_height(height: u64) -> Option<Vec<[u8; 48]>> {
     Some(out)
 }
 
-/// TODO: Chain epoch accessor (Elixir: Consensus.chain_epoch/0)
-/// Placeholder returns 0 until chain state is implemented.
+/// Chain epoch accessor (Elixir: Consensus.chain_epoch/0)
+/// Returns current epoch calculated as height / 100_000
 pub fn chain_epoch() -> u64 {
-    0
+    chain_height() / 100_000
 }
 
-/// TODO: Latest observed nonce for a signer (Elixir: Consensus.chain_nonce/1)
-/// None means no prior nonce is recorded.
-pub fn chain_nonce(_signer: &[u8]) -> Option<u128> {
-    None
+/// Chain height accessor - gets current blockchain height
+pub fn chain_height() -> u64 {
+    match rocksdb::get("sysconf", b"temporal_height") {
+        Ok(Some(bytes)) => {
+            // deserialize the height stored as erlang term
+            match bincode::decode_from_slice::<u64, _>(&bytes, bincode::config::standard()) {
+                Ok((height, _)) => height,
+                Err(_) => 0, // fallback if deserialization fails
+            }
+        }
+        _ => 0, // fallback if key not found
+    }
 }
 
-/// TODO: Balance accessor (Elixir: Consensus.chain_balance/1)
-/// Returns 0 until chain state is implemented.
-pub fn chain_balance(_signer: &[u8]) -> u64 {
-    0
+/// Latest observed nonce for a signer (Elixir: Consensus.chain_nonce/1)
+/// Returns the highest nonce used by this signer
+pub fn chain_nonce(signer: &[u8]) -> Option<i128> {
+    let key = format!("bic:base:nonce:{}", bs58::encode(signer).into_string());
+    match rocksdb::get("contractstate", key.as_bytes()) {
+        Ok(Some(bytes)) => {
+            // Try to deserialize as i128 (nonce value)
+            match bincode::decode_from_slice::<i128, _>(&bytes, bincode::config::standard()) {
+                Ok((nonce, _)) => Some(nonce),
+                Err(_) => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Balance accessor (Elixir: Consensus.chain_balance/1)
+/// Returns the balance for a given signer and symbol (defaults to "AMA")
+pub fn chain_balance(signer: &[u8]) -> u64 {
+    chain_balance_symbol(signer, "AMA")
+}
+
+/// Balance accessor with specific symbol
+pub fn chain_balance_symbol(signer: &[u8], symbol: &str) -> u64 {
+    let key = format!("bic:coin:balance:{}:{}", bs58::encode(signer).into_string(), symbol);
+    match rocksdb::get("contractstate", key.as_bytes()) {
+        Ok(Some(bytes)) => {
+            // Try to deserialize as u64 (balance value)
+            match bincode::decode_from_slice::<u64, _>(&bytes, bincode::config::standard()) {
+                Ok((balance, _)) => balance,
+                Err(_) => 0,
+            }
+        }
+        _ => 0, // default to 0 if no balance found
+    }
 }

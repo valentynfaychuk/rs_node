@@ -89,6 +89,13 @@ pub fn put(cf: &str, key: &[u8], value: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
+pub fn delete(cf: &str, key: &[u8]) -> Result<(), Error> {
+    let h = get_handles();
+    let cf_h = h.db.cf_handle(cf).expect("cf name");
+    h.db.delete_cf(&cf_h, key)?;
+    Ok(())
+}
+
 pub fn iter_prefix(cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Error> {
     let h = get_handles();
     let cf_h = h.db.cf_handle(cf).expect("cf name");

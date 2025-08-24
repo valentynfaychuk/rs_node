@@ -69,11 +69,24 @@ pub fn circulating_with_burn(epoch: u64, burn_meter: &impl BurnMeter) -> u64 {
 }
 
 /// Environment for calls
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallEnv {
     pub entry_epoch: u64,
     pub entry_height: u64,
-    pub account_caller: [u8; 48],
+    pub entry_signer: [u8; 48],          // The signer of the current entry
+    pub entry_vr: Vec<u8>,               // VR hash for the current entry
+    pub tx_hash: Vec<u8>,                // Hash of current transaction
+    pub tx_signer: [u8; 48],             // Signer of current transaction
+    pub account_caller: [u8; 48],        // Current caller account
+    pub account_current: Vec<u8>,        // Current contract account
+    pub call_counter: u64,               // Counter for nested calls
+    pub call_exec_points: u64,           // Available execution points
+    pub call_exec_points_remaining: u64, // Remaining execution points
+    pub attached_symbol: Vec<u8>,        // Attached token symbol
+    pub attached_amount: Vec<u8>,        // Attached token amount
+    pub seed: [u8; 32],                  // Random seed for current call
+    pub seedf64: f64,                    // Seed as f64
+    pub readonly: bool,                  // Read-only call flag
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,10 +176,10 @@ impl Epoch {
             return Err(EpochError::InvalidEpoch);
         }
 
-        // TODO: read trainers from kv
+        // Read trainers from KV or use provided ones
         let trainers = match trainers_opt {
             Some(t) => t,
-            None => unimplemented!("TODO: read trainers from KV"),
+            None => crate::consensus::trainers_for_height(env.entry_height).ok_or(EpochError::InvalidEpoch)?,
         };
 
         if !trainers.iter().any(|pk| pk == malicious_pk) {

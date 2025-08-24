@@ -1,4 +1,5 @@
 use crate::consensus::kv;
+use crate::misc::utils::pk_hex;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -23,14 +24,6 @@ pub fn validate(wasm: &[u8]) -> Result<(), ContractError> {
         Ok(_) => Ok(()),
         Err(e) => Err(ContractError::Compilation(e.to_string())),
     }
-}
-
-fn pk_hex(pk: &[u8]) -> String {
-    let mut s = String::with_capacity(pk.len() * 2);
-    for b in pk {
-        s.push_str(&format!("{:02x}", b));
-    }
-    s
 }
 
 fn key_bytecode(account: &[u8; 48]) -> String {
@@ -68,11 +61,25 @@ pub fn call(function: &str, env: &CallEnv, args: &[Vec<u8>]) -> Result<(), Contr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn ensure_db_init() {
+        INIT.call_once(|| {
+            let test_db_path = "target/test_bic_contract_db";
+            std::fs::create_dir_all(test_db_path).unwrap();
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let _ = crate::misc::rocksdb::init("target/test_bic_contract").await;
+            });
+        });
+    }
 
     #[test]
     fn bytecode_roundtrip_with_deploy_call() {
+        ensure_db_init();
         // reset KV
-        kv::reset();
+        kv::reset_for_tests();
         let env = CallEnv { account_caller: [7u8; 48] };
         let wasm = vec![0xde, 0xad, 0xbe, 0xef];
 

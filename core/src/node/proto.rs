@@ -379,7 +379,8 @@ impl Ping {
         // create a MessageV2 for each shard
         for (shard_index, shard_data) in shards {
             // sign the shard data
-            let signature = bls::sign(&trainer_sk, &shard_data, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
+            let signature =
+                bls::sign(&trainer_sk, &shard_data, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
 
             let msg = MessageV2 {
                 version: version.clone(),

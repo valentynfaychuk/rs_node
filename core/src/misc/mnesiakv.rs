@@ -1,7 +1,7 @@
+use crate::misc::rocksdb as rdb;
 use once_cell::sync::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::RwLock;
-use crate::misc::rocksdb as rdb;
 
 /// Persistent key-value store inspired by Elixir Mnesia-backed helper used in node.local/ex.
 ///
@@ -21,11 +21,11 @@ use crate::misc::rocksdb as rdb;
 ///   nested maps are not merged recursively.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("MnesiaKV not loaded. Call load() first")] 
+    #[error("MnesiaKV not loaded. Call load() first")]
     NotLoaded,
-    #[error("Table '{0}' not found")] 
+    #[error("Table '{0}' not found")]
     TableNotFound(String),
-    #[error("Value is not a Map for merge operation")] 
+    #[error("Value is not a Map for merge operation")]
     ValueNotMap,
     #[error("RocksDB error: {0}")]
     RocksDb(#[from] rdb::Error),
@@ -84,7 +84,8 @@ fn serialize_kv(kv: &KV) -> Result<Vec<u8>, Error> {
 
 // deserialize bytes from rocksdb to KV
 fn deserialize_kv(bytes: &[u8]) -> Result<KV, Error> {
-    let (kv, _len) = bincode::decode_from_slice(bytes, bincode::config::standard()).map_err(|e| Error::Serialization(e.to_string()))?;
+    let (kv, _len) = bincode::decode_from_slice(bytes, bincode::config::standard())
+        .map_err(|e| Error::Serialization(e.to_string()))?;
     Ok(kv)
 }
 
@@ -102,7 +103,7 @@ fn make_index_key(table: &str, index_values: &[&[u8]], primary_key: &[u8]) -> Ve
     let mut index_key = Vec::new();
     index_key.extend_from_slice(table.as_bytes());
     index_key.extend_from_slice(b"_index:");
-    
+
     for (i, value) in index_values.iter().enumerate() {
         if i > 0 {
             index_key.push(b':');
@@ -137,10 +138,7 @@ pub fn load(schema: BTreeMap<String, TableSchema>) -> Result<(), Error> {
     if GLOBAL.get().is_some() {
         return Ok(());
     }
-    let _ = GLOBAL.set(RwLock::new(Store { 
-        schemas: schema.into_iter().collect(),
-        initialized: true,
-    }));
+    let _ = GLOBAL.set(RwLock::new(Store { schemas: schema.into_iter().collect(), initialized: true }));
     Ok(())
 }
 
@@ -158,12 +156,12 @@ fn ensure_table_exists(table: &str, index_fields: Vec<String>) -> Result<(), Err
 pub fn get_all(table: &str) -> Result<Vec<(Vec<u8>, KV)>, Error> {
     // auto-create table if it doesn't exist
     ensure_table_exists(table, vec![])?;
-    
+
     // use rocksdb prefix iterator to get all records for this table
     let prefix = format!("{}:", table);
     let items = rdb::iter_prefix("default", prefix.as_bytes())?;
     let mut result = Vec::new();
-    
+
     for (full_key, value_bytes) in items {
         // extract original key by removing "table:" prefix
         if let Some(key_start) = full_key.iter().position(|&b| b == b':') {
@@ -179,7 +177,7 @@ pub fn get_all(table: &str) -> Result<Vec<(Vec<u8>, KV)>, Error> {
 pub fn get(table: &str, key: &[u8]) -> Result<Option<KV>, Error> {
     // auto-create table if it doesn't exist
     ensure_table_exists(table, vec![])?;
-    
+
     let table_key = make_table_key(table, key);
     match rdb::get("default", &table_key)? {
         Some(bytes) => Ok(Some(deserialize_kv(&bytes)?)),
@@ -197,15 +195,15 @@ pub fn create_table(table: &str, index_fields: Vec<String>) -> Result<(), Error>
 pub fn merge(table: &str, key: &[u8], value: KV) -> Result<KV, Error> {
     // auto-create table if it doesn't exist
     ensure_table_exists(table, vec![])?;
-    
+
     let lock = store()?;
     let s = lock.read().unwrap();
     let schema = s.schemas.get(table).ok_or_else(|| Error::TableNotFound(table.to_string()))?;
     let index_fields = schema.index.clone();
     // release locks
-    
+
     let table_key = make_table_key(table, key);
-    
+
     // get existing value if present and remove old index entries
     let old_val = match rdb::get("default", &table_key)? {
         Some(existing_bytes) => {
@@ -218,20 +216,20 @@ pub fn merge(table: &str, key: &[u8], value: KV) -> Result<KV, Error> {
                 let _ = rdb::put("default", &old_index_key, &[]); // delete by storing empty value
             }
             Some(existing)
-        },
+        }
         None => None,
     };
-    
+
     // merge values
     let new_val = match old_val {
         Some(existing) => KV::merge_top_level(&existing, &value)?,
         None => value.clone(),
     };
-    
+
     // persist the merged value
     let serialized = serialize_kv(&new_val)?;
     rdb::put("default", &table_key, &serialized)?;
-    
+
     // create new index entries
     if !index_fields.is_empty() {
         let new_index_values = extract_index_values(&new_val, &index_fields);
@@ -239,7 +237,7 @@ pub fn merge(table: &str, key: &[u8], value: KV) -> Result<KV, Error> {
         let new_index_key = make_index_key(table, &new_index_refs, key);
         rdb::put("default", &new_index_key, key)?; // store primary key as value
     }
-    
+
     Ok(new_val)
 }
 
@@ -252,62 +250,85 @@ pub fn select_index(table: &str, index_pattern: &[&[u8]]) -> Result<Vec<Vec<u8>>
         return Err(Error::TableNotFound(table.to_string()));
     }
     // release locks
-    
+
     // create index prefix for querying
     let mut prefix = Vec::new();
     prefix.extend_from_slice(table.as_bytes());
     prefix.extend_from_slice(b"_index:");
-    
+
     for (i, pattern_value) in index_pattern.iter().enumerate() {
         if i > 0 {
             prefix.push(b':');
         }
         prefix.extend_from_slice(pattern_value);
     }
-    
+
     // query all matching index entries
     let index_entries = rdb::iter_prefix("default", &prefix)?;
     let mut primary_keys = Vec::new();
-    
+
     for (_index_key, primary_key_bytes) in index_entries {
         if !primary_key_bytes.is_empty() {
             primary_keys.push(primary_key_bytes);
         }
     }
-    
+
     Ok(primary_keys)
+}
+
+/// Clear all data for a given table (for testing purposes)
+#[cfg(test)]
+fn clear_table(table: &str) -> Result<(), Error> {
+    // Clear main table data
+    let table_prefix = format!("{}:", table);
+    let table_entries = rdb::iter_prefix("default", table_prefix.as_bytes())?;
+    for (key, _) in table_entries {
+        rdb::delete("default", &key)?;
+    }
+
+    // Clear index data
+    let index_prefix = format!("{}_index:", table);
+    let index_entries = rdb::iter_prefix("default", index_prefix.as_bytes())?;
+    for (key, _) in index_entries {
+        rdb::delete("default", &key)?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Once;
+
+    // Shared initialization for all mnesiakv tests
+    static INIT: Once = Once::new();
+
+    fn ensure_db_init() {
+        INIT.call_once(|| {
+            let test_db_path = "target/test_mnesiakv_db";
+            std::fs::create_dir_all(test_db_path).unwrap();
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let _ = rdb::init("target/test_mnesiakv").await;
+            });
+        });
+    }
 
     fn schema_with(table: &str, idx: &[&str]) -> BTreeMap<String, TableSchema> {
         let mut s = BTreeMap::new();
-        s.insert(
-            table.to_string(),
-            TableSchema { index: idx.iter().map(|s| s.to_string()).collect() },
-        );
+        s.insert(table.to_string(), TableSchema { index: idx.iter().map(|s| s.to_string()).collect() });
         s
     }
 
     #[test]
     fn load_and_basic_ops() {
-        use std::sync::Once;
-        static INIT: Once = Once::new();
-        
-        // initialize RocksDB for test (only once)
-        INIT.call_once(|| {
-            let test_db_path = "target/test_mnesiakv_db";
-            std::fs::create_dir_all(test_db_path).unwrap();
-            tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let _ = rdb::init("target").await; // ignore error if already initialized
-            });
-        });
-        
+        ensure_db_init();
+
+        // Clear any existing test data to ensure clean state
+        let _ = clear_table("NODEANR_TEST1");
+
         // Ensure isolated GLOBAL per test process is fine for unit tests.
-        load(schema_with("NODEANR_TEST1", &["handshaked", "ip4"]))
-            .expect("load ok");
+        load(schema_with("NODEANR_TEST1", &["handshaked", "ip4"])).expect("load ok");
 
         // Initially empty
         let all = get_all("NODEANR_TEST1").unwrap();
@@ -347,45 +368,38 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].0, b"pk123");
     }
-    
+
     #[test]
     fn test_secondary_indexes() {
-        use std::sync::Once;
-        static INIT: Once = Once::new();
-        
-        // initialize RocksDB for test (only once)
-        INIT.call_once(|| {
-            let test_db_path = "target/test_mnesiakv_index_db";
-            std::fs::create_dir_all(test_db_path).unwrap();
-            tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let _ = rdb::init("target").await; // ignore error if already initialized
-            });
-        });
-        
+        ensure_db_init();
+
+        // Clear any existing test data to ensure clean state
+        let _ = clear_table("NODEANR_TEST2");
+
         // initialize store (ignore error if already initialized)
         let _ = load(BTreeMap::new());
-        
+
         // create table with index on handshaked and ip4 fields (like Elixir NodeANR)
         create_table("NODEANR_TEST2", vec!["handshaked".to_string(), "ip4".to_string()]).unwrap();
-        
+
         // insert records with different handshaked values
         let mut rec1 = BTreeMap::new();
         rec1.insert("pk".to_string(), KV::Bytes(vec![1, 2, 3]));
         rec1.insert("handshaked".to_string(), KV::Bool(true));
         rec1.insert("ip4".to_string(), KV::Bytes(vec![192, 168, 1, 1]));
         merge("NODEANR_TEST2", b"key1", KV::Map(rec1)).unwrap();
-        
+
         let mut rec2 = BTreeMap::new();
         rec2.insert("pk".to_string(), KV::Bytes(vec![4, 5, 6]));
         rec2.insert("handshaked".to_string(), KV::Bool(false));
         rec2.insert("ip4".to_string(), KV::Bytes(vec![192, 168, 1, 2]));
         merge("NODEANR_TEST2", b"key2", KV::Map(rec2)).unwrap();
-        
+
         // query by index: find all handshaked=true records
         let handshaked_keys = select_index("NODEANR_TEST2", &[&[1], &[192, 168, 1, 1]]).unwrap();
         assert_eq!(handshaked_keys.len(), 1);
         assert_eq!(handshaked_keys[0], b"key1");
-        
+
         // query by index: find all handshaked=false records
         let not_handshaked_keys = select_index("NODEANR_TEST2", &[&[0]]).unwrap();
         assert!(not_handshaked_keys.len() >= 1);

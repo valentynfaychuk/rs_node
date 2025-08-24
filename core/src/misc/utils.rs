@@ -17,6 +17,14 @@ pub fn get_unix_nanos_now() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).as_ref().map(Duration::as_nanos).unwrap_or(0)
 }
 
+pub fn pk_hex(pk: &[u8]) -> String {
+    let mut s = String::with_capacity(pk.len() * 2);
+    for b in pk {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
 /// Produce a hex dump similar to `hexdump -C` for a binary slice.
 pub fn hexdump(data: &[u8]) -> String {
     let mut out = String::new();
