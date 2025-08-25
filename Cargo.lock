@@ -591,6 +591,7 @@ version = "0.1.0"
 dependencies = [
  "ama_core",
  "anyhow",
+ "async-trait",
  "bincode",
  "bs58",
  "clap",

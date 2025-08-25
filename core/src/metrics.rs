@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::warn;
 
 static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
 
@@ -38,7 +39,7 @@ pub struct Metrics {
     reassembly_error_count: AtomicU64,             // Reed-Solomon shard assembly
     etf_parsing_validation_error_count: AtomicU64, // ETF decoding and validation
     proto_handling_error_count: AtomicU64,         // Protocol message handling
-    unknown_proto_error_count: AtomicU64,          // Unknown Protocol messages
+    other_error_count: AtomicU64,                  // Miscellaneous/other errors
 
     // Total packets counter
     total_v2udp_packets_count: AtomicU64, // Total UDP packets received
@@ -70,7 +71,7 @@ impl Metrics {
             reassembly_error_count: AtomicU64::new(0),
             etf_parsing_validation_error_count: AtomicU64::new(0),
             proto_handling_error_count: AtomicU64::new(0),
-            unknown_proto_error_count: AtomicU64::new(0),
+            other_error_count: AtomicU64::new(0),
 
             // Initialize total packets counter
             total_v2udp_packets_count: AtomicU64::new(0),
@@ -78,96 +79,118 @@ impl Metrics {
     }
 }
 
+#[inline]
 pub fn inc_ping() {
     METRICS.ping_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_pong() {
     METRICS.pong_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_who_are_you() {
     METRICS.who_are_you_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_txpool() {
     METRICS.txpool_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_peers() {
     METRICS.peers_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_sol() {
     METRICS.sol_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_entry() {
     METRICS.entry_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_attestation_bulk() {
     METRICS.attestation_bulk_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_consensus_bulk() {
     METRICS.consensus_bulk_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_catchup_entry() {
     METRICS.catchup_entry_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_catchup_tri() {
     METRICS.catchup_tri_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_catchup_bi() {
     METRICS.catchup_bi_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_catchup_attestation() {
     METRICS.catchup_attestation_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_special_business() {
     METRICS.special_business_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_special_business_reply() {
     METRICS.special_business_reply_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_solicit_entry() {
     METRICS.solicit_entry_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_solicit_entry2() {
     METRICS.solicit_entry2_count.fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn inc_v2udp_packets() {
     METRICS.total_v2udp_packets_count.fetch_add(1, Ordering::Relaxed);
 }
 
-pub fn inc_v2_parsing_errors() {
+#[inline]
+pub fn inc_v2_parsing_errors(e: &crate::node::msg_v2::Error) {
+    warn!(target = "metrics", "v2 error: {e:?}");
     METRICS.v2_error_count.fetch_add(1, Ordering::Relaxed);
 }
 
-pub fn inc_reassembly_errors() {
+#[inline]
+pub fn inc_reassembly_errors(e: &crate::node::reassembler::Error) {
+    warn!(target = "metrics", "reassembler error: {e:?}");
     METRICS.reassembly_error_count.fetch_add(1, Ordering::Relaxed);
 }
 
-pub fn inc_parsing_and_validation_errors() {
+#[inline]
+pub fn inc_parsing_and_validation_errors(e: &crate::node::proto::Error) {
+    warn!(target = "metrics", "parsing-validation error: {e:?}");
     METRICS.etf_parsing_validation_error_count.fetch_add(1, Ordering::Relaxed);
 }
 
-pub fn inc_handling_errors() {
+#[inline]
+pub fn inc_handling_errors(e: &crate::node::proto::Error) {
+    warn!(target = "metrics", "handling error: {e:?}");
     METRICS.proto_handling_error_count.fetch_add(1, Ordering::Relaxed);
-}
-
-pub fn inc_unknown_proto() {
-    METRICS.unknown_proto_error_count.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Prometheus-formatted metrics string
@@ -228,13 +251,11 @@ amadeus_packet_errors_total{{type="v2_parsing"}} {}
 amadeus_packet_errors_total{{type="reassembly"}} {}
 amadeus_packet_errors_total{{type="etf_decode_and_validation"}} {}
 amadeus_packet_errors_total{{type="handling"}} {}
-amadeus_packet_errors_total{{type="unknown_proto"}} {}
 "#,
         metrics.v2_error_count.load(Ordering::Relaxed),
         metrics.reassembly_error_count.load(Ordering::Relaxed),
         metrics.etf_parsing_validation_error_count.load(Ordering::Relaxed),
         metrics.proto_handling_error_count.load(Ordering::Relaxed),
-        metrics.unknown_proto_error_count.load(Ordering::Relaxed),
     );
 
     format!("{}{}", protocol_metrics, error_metrics)
@@ -300,8 +321,10 @@ mod tests {
 
     #[test]
     fn test_error_counters() {
-        inc_v2_parsing_errors();
-        inc_reassembly_errors();
+        let v2_error = crate::node::msg_v2::Error::BadPkLen(10);
+        let reassembly_error = crate::node::reassembler::Error::NoSignature;
+        inc_v2_parsing_errors(&v2_error);
+        inc_reassembly_errors(&reassembly_error);
         inc_v2udp_packets();
 
         let metrics_str = get_metrics();

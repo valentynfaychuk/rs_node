@@ -9,7 +9,6 @@ pub mod misc;
 pub mod node;
 pub mod wasm;
 
-
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]

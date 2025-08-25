@@ -13,7 +13,4 @@ pub use safe::spawn;
 
 // Test modules
 #[cfg(test)]
-mod test_wasm_runtime;
-
-#[cfg(test)]
-mod test_real_contracts;
+mod tests;

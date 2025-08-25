@@ -1,4 +1,5 @@
 //pub mod etf_ser;
+pub mod anr;
 pub mod msg_v2;
 /// The network protocol of the Amadeus node
 pub mod proto;

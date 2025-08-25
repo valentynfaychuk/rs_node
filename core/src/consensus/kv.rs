@@ -62,7 +62,7 @@ pub fn reset() {
 #[cfg(test)]
 pub fn reset_for_tests() {
     reset(); // Clear mutations
-    
+
     // Clear all data from the sysconf column family to ensure clean test state
     // Use direct RocksDB iteration and deletion to avoid potential consistency issues
     // with kv_clear("") which relies on iter_prefix

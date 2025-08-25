@@ -38,7 +38,7 @@ pub trait Proto: Send + Sync {
             }
             Err(e) => {
                 warn!("Error handling {}: {}", self.get_name(), e);
-                metrics::inc_handling_errors();
+                metrics::inc_handling_errors(&e);
                 Err(e)
             }
         }
@@ -105,7 +105,7 @@ pub enum Instruction {
 /// Also does the validation
 #[instrument(skip(bin), name = "Proto::from_etf_validated")]
 pub fn from_etf_bin(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
-    from_etf_bin_inner(bin).inspect_err(|_| metrics::inc_parsing_and_validation_errors())
+    from_etf_bin_inner(bin).inspect_err(|e| metrics::inc_parsing_and_validation_errors(e))
 }
 
 fn from_etf_bin_inner(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
@@ -125,7 +125,6 @@ fn from_etf_bin_inner(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
         Peers::NAME => Box::new(Peers::from_etf_map_validated(map)?),
         _ => {
             warn!("Unknown operation: {}", op_atom.name);
-            metrics::inc_unknown_proto();
             return Err(Error::BadEtf("op"));
         }
     };

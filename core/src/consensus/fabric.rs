@@ -55,10 +55,14 @@ pub fn insert_entry(hash: &[u8; 32], height: u64, slot: u64, entry_bin: &[u8], s
         rocksdb::put(CF_DEFAULT, hash, entry_bin)?;
         rocksdb::put(CF_MY_SEEN_TIME_FOR_ENTRY, hash, &seen_millis.to_be_bytes())?;
 
-        // index by height and slot -> value is hash, key is "{height}:{hash_b58_or_bytes}"
+        // index by height and slot -> key format allows efficient range queries
+        // use compound key to support multiple entries per height/slot
         let b58_hash = bs58::encode(hash).into_string();
-        rocksdb::put(CF_ENTRY_BY_HEIGHT, format!("{}:{}", height, &b58_hash).as_bytes(), hash)?;
-        rocksdb::put(CF_ENTRY_BY_SLOT, format!("{}:{}", slot, &b58_hash).as_bytes(), hash)?;
+        let height_key = format!("{:016}:{}", height, &b58_hash);
+        rocksdb::put(CF_ENTRY_BY_HEIGHT, height_key.as_bytes(), hash)?;
+
+        let slot_key = format!("{:016}:{}", slot, &b58_hash);
+        rocksdb::put(CF_ENTRY_BY_SLOT, slot_key.as_bytes(), hash)?;
     }
 
     Ok(())
@@ -66,8 +70,22 @@ pub fn insert_entry(hash: &[u8; 32], height: u64, slot: u64, entry_bin: &[u8], s
 
 /// Get all entries (ETF-encoded) for a specific height
 pub fn entries_by_height(height: u64) -> Result<Vec<Vec<u8>>, Error> {
-    let prefix = format!("{}:", height);
-    let kvs = rocksdb::iter_prefix(CF_ENTRY_BY_HEIGHT, prefix.as_bytes())?;
+    let height_prefix = format!("{:016}:", height);
+    let kvs = rocksdb::iter_prefix(CF_ENTRY_BY_HEIGHT, height_prefix.as_bytes())?;
+    let mut out = Vec::new();
+    for (_k, v) in kvs.into_iter() {
+        // v is entry hash
+        if let Some(entry_bin) = rocksdb::get(CF_DEFAULT, &v)? {
+            out.push(entry_bin);
+        }
+    }
+    Ok(out)
+}
+
+/// Get all entries (ETF-encoded) for a specific slot
+pub fn entries_by_slot(slot: u64) -> Result<Vec<Vec<u8>>, Error> {
+    let slot_prefix = format!("{:016}:", slot);
+    let kvs = rocksdb::iter_prefix(CF_ENTRY_BY_SLOT, slot_prefix.as_bytes())?;
     let mut out = Vec::new();
     for (_k, v) in kvs.into_iter() {
         // v is entry hash
@@ -316,5 +334,55 @@ pub fn get_temporal_tip() -> Result<Option<[u8; 32]>, Error> {
     match rocksdb::get(CF_SYSCONF, b"temporal_tip")? {
         Some(rt) => Ok(Some(rt.try_into().map_err(|_| Error::KvCell("temporal_tip"))?)),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_height_slot_indexing() {
+        // initialize db for testing
+        let test_path = format!("target/test_fabric_{}", std::process::id());
+        let _ = init(&test_path).await;
+
+        // create test entry data
+        let entry_hash1: [u8; 32] = [1; 32];
+        let entry_hash2: [u8; 32] = [2; 32];
+        let entry_bin1 = vec![1, 2, 3, 4];
+        let entry_bin2 = vec![5, 6, 7, 8];
+        let height = 12345;
+        let slot1 = 67890;
+        let slot2 = 67891;
+        let seen_time = 1234567890_u128;
+
+        // insert two entries with same height but different slots
+        insert_entry(&entry_hash1, height, slot1, &entry_bin1, seen_time).unwrap();
+        insert_entry(&entry_hash2, height, slot2, &entry_bin2, seen_time).unwrap();
+
+        // test querying by height should return both entries
+        let entries = entries_by_height(height).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.contains(&entry_bin1));
+        assert!(entries.contains(&entry_bin2));
+
+        // test querying by slot should return one entry each
+        let entries_slot1 = entries_by_slot(slot1).unwrap();
+        assert_eq!(entries_slot1.len(), 1);
+        assert_eq!(entries_slot1[0], entry_bin1);
+
+        let entries_slot2 = entries_by_slot(slot2).unwrap();
+        assert_eq!(entries_slot2.len(), 1);
+        assert_eq!(entries_slot2[0], entry_bin2);
+
+        // test querying non-existent height/slot returns empty
+        let empty_entries = entries_by_height(99999).unwrap();
+        assert!(empty_entries.is_empty());
+
+        let empty_slot = entries_by_slot(99999).unwrap();
+        assert!(empty_slot.is_empty());
+
+        println!("height/slot indexing test passed");
     }
 }

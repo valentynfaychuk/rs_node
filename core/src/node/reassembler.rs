@@ -136,7 +136,7 @@ impl ReedSolomonReassembler {
     }
 
     pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
-        self.add_shard_inner(message).await.inspect_err(|_| crate::metrics::inc_reassembly_errors())
+        self.add_shard_inner(message).await.inspect_err(|e| crate::metrics::inc_reassembly_errors(e))
     }
 
     // adds a shard to the reassembly buffer

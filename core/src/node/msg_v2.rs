@@ -62,7 +62,7 @@ impl TryFrom<&[u8]> for MessageV2 {
     type Error = Error;
     fn try_from(bin: &[u8]) -> Result<Self, Self::Error> {
         crate::metrics::inc_v2udp_packets();
-        Self::try_from_inner(bin).inspect_err(|_| crate::metrics::inc_v2_parsing_errors())
+        Self::try_from_inner(bin).inspect_err(|e| crate::metrics::inc_v2_parsing_errors(e))
     }
 }
 

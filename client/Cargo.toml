@@ -21,3 +21,4 @@ wasmer = { version = "4", features = ["cranelift"] }
 bincode = "2.0.1"
 clap = { version = "4.4", features = ["derive"] }
 rand = "0.8"
+async-trait = "0.1"

@@ -6,7 +6,7 @@ use tokio::time::timeout;
 use ama_core::node::ReedSolomonReassembler;
 use ama_core::node::msg_v2::MessageV2;
 use ama_core::node::proto::{Instruction, from_etf_bin};
-use client::{PING, init_tracing};
+use client::{DumpReplaySocket, PING, init_tracing};
 
 use plot::{serve, state::AppState};
 
@@ -16,27 +16,18 @@ async fn main() -> std::io::Result<()> {
     init_tracing();
     ama_core::init(None).await.expect("core init");
 
-    // Check for UDP_REPLAY environment variable for log file playback
-    let socket: std::sync::Arc<dyn client::PacketReceiver> = if let Ok(log_path) = std::env::var("UDP_REPLAY") {
-        // Create LogSocket for file replay
-        let log_socket = client::LogSocket::new(&log_path).expect("Failed to open log file");
-        std::sync::Arc::new(log_socket)
-    } else {
-        // Target UDP address of an Amadeus node.
-        let addr: SocketAddr = std::env::var("UDP_ADDR")
-            .unwrap_or_else(|_| "84.217.100.57:36969".to_string())
-            .parse()
-            .expect("valid UDP_ADDR");
+    // Target UDP address of an Amadeus node.
+    let addr: SocketAddr = std::env::var("UDP_ADDR")
+        .unwrap_or_else(|_| "84.217.100.57:36969".to_string())
+        .parse()
+        .expect("valid UDP_ADDR");
 
-        // Bind a local UDP socket (Tokio).
-        let udp_socket = UdpSocket::bind("0.0.0.0:36969").await?;
+    // Bind a local UDP socket (Tokio).
+    let socket = UdpSocket::bind("0.0.0.0:36969").await?;
 
-        // Send a simple ping message to the node.
-        udp_socket.send_to(&PING, &addr).await?;
-        println!("sent");
-
-        std::sync::Arc::new(udp_socket)
-    };
+    // Send a simple ping message to the node.
+    socket.send_to(&PING, &addr).await?;
+    println!("sent");
 
     let app_state = plot::state::AppState::new();
 
@@ -64,15 +55,11 @@ async fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-async fn recv_loop(
-    socket: std::sync::Arc<dyn client::PacketReceiver>,
-    app_state: AppState,
-    reassembler: ReedSolomonReassembler,
-) -> std::io::Result<()> {
+async fn recv_loop(socket: UdpSocket, app_state: AppState, reassembler: ReedSolomonReassembler) -> std::io::Result<()> {
     let mut buf = vec![0u8; 65_535];
 
     loop {
-        match timeout(Duration::from_secs(10), socket.recv_from(&mut buf)).await {
+        match timeout(Duration::from_secs(10), socket.dump_replay_recv_from(&mut buf)).await {
             Err(_) => {
                 // If no packets for a while, print metrics
                 println!("{}", ama_core::metrics::get_metrics());

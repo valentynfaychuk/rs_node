@@ -1,12 +1,10 @@
 # Rust rewrite of the Amadeus Node
 
-Folder structure:
+This initiative aims to create a Rust implementation of the [Amadeus Node](https://github.com/amadeus-robot/node.git).
 
-- client: Light client
-- core: Core library
-- plot: Web dashboard
-- pcaps: Testing PCAP files
-- scripts: Self explanatory
+- core (ama_core): Core library, needed by every project in Amadeus ecosystem
+- client: The library with examples of using the core library (cli, node, etc.)
+- plot: Web dashboard, used by the client
 
 ## Prerequisites
 
@@ -29,120 +27,97 @@ git clone https://github.com/facebook/rocksdb.git && cd rocksdb && make ldb && m
 brew install rocksdb # or on MacOS (this will install `rocksdb_ldb` and `rocksdb_sst_dump`)
 ```
 
-## Running
+## Testing
 
-Running is easy, check `.cargo/config.toml` for command aliases:
+Check `.cargo/config.toml` for command aliases.
 
-```bash
-# Node is an Amadeus node that receives and handles messages
-# add UDP_ADDR for peer Amadeus node, default 127.0.0.1:36969
-cargo node
+### Unittests
 
-# CLI is a client that can deploy a contract or send transactions
-cargo cli gensk trainer-sk
-cargo cli getpk trainer-sk
-
-# Log is a utility that captures raw UDP diagrams for further replay
-cargo log
-```
-
-### Running tests
-
-Tests are work in progress and some of the KV unittests are flaky.
-Don't freak out if they fail sometimes, just re-run them.
+You need to run `scripts/compile-contracts.sh` script before running
+tests because wasm tests rely on contract wasm files. Tests are work
+in progress and some of the KV unittests are flaky. Don't freak out
+if they fail sometimes, just re-run them.
 
 ```bash
-# WASM tests rely on .wasm contracts, you need to compile them first
-wat2wasm wasm/simple_counter.wat -o wasm/simple_counter.wasm
-wat2wasm wasm/token_contract.wat -o wasm/token_contract.wasm
-
 # The test-all is also an alias
 cargo test-all
 ```
 
-## Running a LOG simulation
+### CLI
+
+CLI is a client that can deploy a contract or send transactions.
+Examples of usage:
 
 ```bash
-# Step 1. Run the logger to capture the traffic
-cargo log capture 10000
-# Step 2. Tell node to use capture instead of a socket
-UDP_REPLAY=capture cargo node
+cargo cli gensk trainer-sk
+cargo cli getpk trainer-sk
 ```
 
-## Running a PCAP simulation
+### Node simulation (NATIVE)
 
-Step 1. Record traffic to a pcap on a real amadeus node (port 36969).
-This command is transparent to the node but could impact the performance,
-so feel free to run it alongside the node, but without abusing.
+The client library has the implementation of a traffic capturing
+and replay natively through rust, the size of the capture is a bit
+smaller than pcap capture 8.3M vs 8.8M, and the **format is custom
+binary and can't be reliably dumped/parsed/rewritten elsewhere**.
 
 ```bash
-tcpdump -i any udp dst port 36969 -w pcaps/test.pcap -c 10000
+# Record traffic to log when running a node
+# This command is not transparent and will require the UDP socket,
+# beware when running it alongside another running amadeus node
+UDP_DUMP=log cargo node
 ```
 
-Step 2. Rewrite the PCAP to match your LAN. This is needed to make sure
-that the packets are addressed to the light client and will arrive.
+The `log` file has the binary capture of the traffic. If you
+run the above command second time, the new capture will get appended.
 
 ```bash
-./pcaps/rewrite-pcap.sh pcaps/test.pcap en0
-# it must create pcaps/test.pcap.local
+# Replay the captured traffic
+UDP_REPLAY=log cargo node
 ```
 
-Step 3. Replay the rewritten PCAP locally. To run the replay, you need sudo
-because the replay command works with the kernel stack.
+### Node simulation (PCAP)
+
+Run the `scripts/rewrite-pcaps.sh en0` script to rewrite the pcap
+files to match your LAN, this is needed to fix the addressing for
+the replay, feel free to choose any interface.
 
 ```bash
-sudo tcpreplay -i en0 --pps 1000 pcaps/test.pcap.local
-# if you want to watch the replay in real-time, you can use:
-sudo tcpdump -i en0 -n -vv udp dst port 36969
+cargo node
+# best to run the replay in another terminal
+tcpreplay -i en0 --pps 1000 pcaps/test.pcap.local
 ```
 
-### Expected output after `pcaps/test.pcap.local`
-
-Core library has a built-in metrics system (light client prints them after
-10s of being idle) Expected output of the metrics after replaying the
-`pcaps/test.pcap.local` file, total number of packets in the pcap is 10000
-but the light client processes 10001 because it also receives its own ping:
+Optionally you can watch the replay as it happens:
 
 ```bash
-# HELP amadeus_protocol_messages_total Total number of protocol messages handled by type
-# TYPE amadeus_protocol_messages_total counter
+tcpdump -i en0 -n -vv udp dst port 36969 # to watch replay in real time
+```
+
+After replaying the `pcaps/test.pcap.local` file, wait 10s with no
+traffic, and the node will print metrics, they must be as follows:
+
+```bash
 amadeus_protocol_messages_total{type="ping"} 8656
-amadeus_protocol_messages_total{type="pong"} 0
-amadeus_protocol_messages_total{type="who_are_you"} 0
-amadeus_protocol_messages_total{type="txpool"} 0
-amadeus_protocol_messages_total{type="peers"} 0
-amadeus_protocol_messages_total{type="sol"} 0
 amadeus_protocol_messages_total{type="entry"} 35
 amadeus_protocol_messages_total{type="attestation_bulk"} 1165
-amadeus_protocol_messages_total{type="consensus_bulk"} 0
-amadeus_protocol_messages_total{type="catchup_entry"} 0
-amadeus_protocol_messages_total{type="catchup_tri"} 0
-amadeus_protocol_messages_total{type="catchup_bi"} 0
-amadeus_protocol_messages_total{type="catchup_attestation"} 0
-amadeus_protocol_messages_total{type="special_business"} 0
-amadeus_protocol_messages_total{type="special_business_reply"} 0
-amadeus_protocol_messages_total{type="solicit_entry"} 0
-amadeus_protocol_messages_total{type="solicit_entry2"} 0
-
-# HELP amadeus_packets_total Total number of UDP packets received
-# TYPE amadeus_packets_total counter
 amadeus_udp_packets_total 10000
-
-# HELP amadeus_packet_errors_total Total number of packet processing errors by type
-# TYPE amadeus_packet_errors_total counter
-amadeus_packet_errors_total{type="v2_parsing"} 0
-amadeus_packet_errors_total{type="reassembly"} 0
-amadeus_packet_errors_total{type="etf_decode_and_validation"} 0
-amadeus_packet_errors_total{type="handling"} 0
-amadeus_packet_errors_total{type="unknown_proto"} 0
 ```
 
-### Troubleshooting PCAP replay
+#### Recording capture
 
-If you see that not all packets from the PACP reach the light client, it
-could be because the kernel buffers are too small to handle the replay at
-a given rate, you need to increase the kernel buffers for UDP traffic or
-decrease the `--pps` value.
+```bash
+# This command is transparent to the node but could impact the performance,
+# so feel free to run it alongside the node, but with caution
+tcpdump -i any udp dst port 36969 -w test.pcap -c 10000
+```
+
+#### Troubleshooting replay
+
+Replaying `pcaps/test.pcap.local` sends exactly 10000 packets, if you
+see that not all packets from the capture reach the light client, it
+could be because the kernel buffers are too small to handle the replay
+at a given rate, you need to increase the kernel buffers for UDP
+traffic or decrease the `--pps` value.
 
 ```bash
 # The packets are often getting lost because they overflow the kernel buffers
@@ -152,17 +127,17 @@ sudo sysctl -w net.inet.udp.recvspace=2097152     # default UDP recv buffer (per
 sysctl kern.ipc.maxsockbuf net.inet.udp.recvspace # check the values
 ```
 
-If you see that no packets are reaching the light client, the reason could
-be that your IP address changed (e.g. after the restart), simply recreate
-the `.pcap.local` file to insert the current IP address.
+If you see that no packets can reach the light client, the reason could
+be that your IP address changed (e.g. after restart), simply recreate
+the `.local` files to use the current LAN.
 
 ```bash
-rm pcaps/test.pcap.local && ./pcaps/rewrite-pcap.sh pcaps/test.pcap en0
+rm pcaps/*.local && ./scripts/rewrite-pcaps.sh en0
 ```
 
 ## Debugging the RocksDB
 
-If installed on MacOS using brew, the command is `rocksdb_ldb` and `rocksdb_sst_dump`,
+If installed on MacOS using brew, the commands are `rocksdb_ldb` and `rocksdb_sst_dump`,
 if manually - then the commands are `ldb` and `sst_dump` respectively.
 
 ```bash
@@ -194,10 +169,10 @@ and instead to use channels for communication between the threads.
 ## Adding core library to other project
 
 ```bash
-cargo add ama_core --git https://github.com/amadeus-robot/rs_node --package core --branch main
+cargo add ama_core --git https://github.com/amadeus-robot/rs_node --package ama_core --branch main
 # Or add following to Cargo.toml
 # [dependencies]
-# ama_core = { package = "core", git = "https://github.com/amadeus-robot/rs_node", branch = "main" }
+# ama_core = { package = "ama_core", git = "https://github.com/amadeus-robot/rs_node", branch = "main" }
 ```
 
 ## Contributing
