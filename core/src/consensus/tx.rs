@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::consensus::DST_TX;
 use crate::misc::blake3;
 use crate::misc::bls12_381;
@@ -376,7 +377,7 @@ pub fn pack(txu: &TxU) -> Vec<u8> {
 
 /// Build and sign a transaction like Elixir TX.build/7. TODO: needs VanillaSer and BLS signing.
 pub fn build(
-    sk: &[u8],
+    config: &Config,
     contract: &[u8],
     function: &str,
     args: &[Vec<u8>],
@@ -384,9 +385,6 @@ pub fn build(
     attached_symbol: Option<&[u8]>,
     attached_amount: Option<&[u8]>,
 ) -> Vec<u8> {
-    // derive signer public key from secret key
-    let signer_pk = crate::misc::bls12_381::get_public_key(sk).expect("invalid secret key");
-
     // choose nonce: Elixir uses :os.system_time(:nanosecond)
     let nonce_val: i128 = match nonce {
         Some(n) => n as i128,
@@ -410,15 +408,15 @@ pub fn build(
 
     // Build inner tx map
     let mut tx_map = BTreeMap::new();
-    tx_map.insert(Value::Bytes(b"signer".to_vec()), Value::Bytes(signer_pk.to_vec()));
+    tx_map.insert(Value::Bytes(b"signer".to_vec()), Value::Bytes(config.get_pk().to_vec()));
     tx_map.insert(Value::Bytes(b"nonce".to_vec()), Value::Int(nonce_val));
     tx_map.insert(Value::Bytes(b"actions".to_vec()), Value::List(vec![Value::Map(action_map)]));
 
     let tx_encoded = vanilla_ser::encode(&Value::Map(tx_map));
-    let hash = crate::misc::blake3::hash(&tx_encoded);
+    let hash = blake3::hash(&tx_encoded);
 
     // Sign hash with DST_TX
-    let signature = crate::misc::bls12_381::sign(sk, &hash, DST_TX).expect("failed to sign tx");
+    let signature = bls12_381::sign(&config.get_sk(), &hash, DST_TX).expect("failed to sign tx");
 
     // Build outer map
     let mut outer_map = BTreeMap::new();

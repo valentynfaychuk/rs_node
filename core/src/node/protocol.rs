@@ -45,7 +45,7 @@ pub trait Proto: Send + Sync {
     }
     async fn handle_inner(&self) -> Result<Instruction, Error>;
     /// Convert to ETF binary format
-    fn to_etf_bin(&self) -> Result<Vec<u8>, Error>;
+    fn to_etf_bin(&self) -> Result<Vec<u8>, Error>; // TODO: must be separate for types (not in trait)
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -251,13 +251,13 @@ impl Ping {
         Ok(Self::new(temporal, rooted))
     }
 
-    pub fn to_msg_v2(&self) -> Result<MessageV2, Error> {
+    pub fn to_msg_v2(&self, config: &config::Config) -> Result<MessageV2, Error> {
         // create a MessageV2 from this Ping
         let compressed_payload = self.to_compressed_etf_bin()?;
 
         // get signing keys from config
-        let pk = config::trainer_pk();
-        let trainer_sk = config::trainer_sk();
+        let pk = config.get_pk();
+        let trainer_sk = config.get_sk();
 
         // create message metadata
         let ts_nano = get_unix_nanos_now() as u64;
@@ -285,7 +285,7 @@ impl Ping {
         })
     }
 
-    /// Convert Ping to ETF binary format
+    /// Convert Ping to ETF binary format (compressed, symmetric with from_etf_bin)
     pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
         let mut m = HashMap::new();
         m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from("ping")));
@@ -294,25 +294,27 @@ impl Ping {
         m.insert(Term::Atom(Atom::from("ts_m")), Term::from(eetf::BigInteger { value: self.ts_m.into() }));
 
         let term = Term::from(Map { map: m });
-        let mut out = Vec::new();
-        term.encode(&mut out).map_err(Error::EtfEncode)?;
-        Ok(out)
-    }
+        let mut etf_data = Vec::new();
+        term.encode(&mut etf_data).map_err(Error::EtfEncode)?;
 
-    /// Create compressed ETF binary for transmission
-    pub fn to_compressed_etf_bin(&self) -> Result<Vec<u8>, Error> {
-        let etf_data = self.to_etf_bin()?;
+        // compress to be symmetric with from_etf_bin
         let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
         Ok(compressed)
     }
 
+    /// Create compressed ETF binary for transmission (same as to_etf_bin now)
+    pub fn to_compressed_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        // to_etf_bin now returns compressed data, so this is the same
+        self.to_etf_bin()
+    }
+
     /// Create a signed MessageV2 from this Ping (single shard)
-    pub fn to_message_v2(&self) -> Result<MessageV2, Error> {
+    pub fn to_message_v2(&self, config: &config::Config) -> Result<MessageV2, Error> {
         let compressed_payload = self.to_compressed_etf_bin()?;
 
         // get signing keys from config
-        let pk = config::trainer_pk();
-        let trainer_sk = config::trainer_sk();
+        let pk = config.get_pk();
+        let trainer_sk = config.get_sk();
 
         // create message metadata
         let ts_nano = std::time::SystemTime::now()
@@ -344,7 +346,7 @@ impl Ping {
     }
 
     /// Create multiple signed MessageV2 packets with Reed-Solomon sharding for large payloads
-    pub fn to_message_v2_sharded(&self) -> Result<Vec<Vec<u8>>, Error> {
+    pub fn to_message_v2_sharded(&self, config: &config::Config) -> Result<Vec<Vec<u8>>, Error> {
         const MAX_UDP_SIZE: usize = 1300; // ~1.3KB UDP limit
         const HEADER_SIZE: usize = 167; // messagev2 header size from protocol spec
 
@@ -354,7 +356,7 @@ impl Ping {
         let total_size = HEADER_SIZE + compressed_payload.len();
         if total_size <= MAX_UDP_SIZE {
             // single packet - no sharding needed
-            let msg = self.to_message_v2()?;
+            let msg = self.to_message_v2(config)?;
             let packet: Vec<u8> = msg.try_into()?;
             return Ok(vec![packet]);
         }
@@ -364,8 +366,8 @@ impl Ping {
         let shards = rs.encode_shards(&compressed_payload)?;
 
         // get signing keys from config
-        let pk = config::trainer_pk();
-        let trainer_sk = config::trainer_sk();
+        let pk = config.get_pk();
+        let trainer_sk = config.get_sk();
 
         let ts_nano = get_unix_nanos_now() as u64; // TODO: check if this is fine
 
@@ -424,9 +426,12 @@ impl Proto for Pong {
         m.insert(Term::Atom(Atom::from("ts_m")), Term::from(eetf::BigInteger { value: self.ts_m.into() }));
 
         let term = Term::from(Map { map: m });
-        let mut out = Vec::new();
-        term.encode(&mut out).map_err(Error::EtfEncode)?;
-        Ok(out)
+        let mut etf_data = Vec::new();
+        term.encode(&mut etf_data).map_err(Error::EtfEncode)?;
+
+        // compress to be symmetric with from_etf_bin
+        let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
+        Ok(compressed)
     }
 }
 
@@ -466,9 +471,12 @@ impl Proto for TxPool {
         m.insert(Term::Atom(Atom::from("txs_packed")), Term::from(Binary { bytes: txs_packed }));
 
         let term = Term::from(Map { map: m });
-        let mut out = Vec::new();
-        term.encode(&mut out).map_err(Error::EtfEncode)?;
-        Ok(out)
+        let mut etf_data = Vec::new();
+        term.encode(&mut etf_data).map_err(Error::EtfEncode)?;
+
+        // compress to be symmetric with from_etf_bin
+        let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
+        Ok(compressed)
     }
 }
 
@@ -536,9 +544,12 @@ impl Proto for Peers {
         m.insert(Term::Atom(Atom::from("ips")), Term::from(List { elements: ip_terms }));
 
         let term = Term::from(Map { map: m });
-        let mut out = Vec::new();
-        term.encode(&mut out).map_err(Error::EtfEncode)?;
-        Ok(out)
+        let mut etf_data = Vec::new();
+        term.encode(&mut etf_data).map_err(Error::EtfEncode)?;
+
+        // compress to be symmetric with from_etf_bin
+        let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
+        Ok(compressed)
     }
 }
 
@@ -550,7 +561,6 @@ impl Peers {
 mod tests {
     use super::*;
     use crate::consensus::entry::{EntryHeader, EntrySummary};
-    use miniz_oxide::deflate::{CompressionLevel, compress_to_vec};
 
     #[tokio::test]
     async fn test_ping_etf_roundtrip() {
@@ -559,14 +569,11 @@ mod tests {
         let rooted = create_dummy_entry_summary();
         let ping = Ping::new(temporal, rooted);
 
-        // serialize to ETF
-        let etf_bin = ping.to_etf_bin().expect("should serialize");
-
-        // compress for transmission (as expected by from_etf_bin)
-        let compressed = compress_to_vec(&etf_bin, CompressionLevel::DefaultLevel as u8);
+        // serialize to ETF (now compressed by default)
+        let compressed_bin = ping.to_etf_bin().expect("should serialize");
 
         // deserialize back
-        let result = from_etf_bin(&compressed).expect("should deserialize");
+        let result = from_etf_bin(&compressed_bin).expect("should deserialize");
 
         // check that we get the right type
         assert_eq!(result.get_name(), "ping");
@@ -576,9 +583,8 @@ mod tests {
     async fn test_pong_etf_roundtrip() {
         let pong = Pong { ts_m: 1234567890, seen_time_ms: 9876543210 };
 
-        let etf_bin = pong.to_etf_bin().expect("should serialize");
-        let compressed = compress_to_vec(&etf_bin, CompressionLevel::DefaultLevel as u8);
-        let result = from_etf_bin(&compressed).expect("should deserialize");
+        let compressed_bin = pong.to_etf_bin().expect("should serialize");
+        let result = from_etf_bin(&compressed_bin).expect("should deserialize");
 
         assert_eq!(result.get_name(), "pong");
     }
@@ -587,9 +593,8 @@ mod tests {
     async fn test_txpool_etf_roundtrip() {
         let txpool = TxPool { valid_txs: vec![vec![1, 2, 3], vec![4, 5, 6]] };
 
-        let etf_bin = txpool.to_etf_bin().expect("should serialize");
-        let compressed = compress_to_vec(&etf_bin, CompressionLevel::DefaultLevel as u8);
-        let result = from_etf_bin(&compressed).expect("should deserialize");
+        let compressed_bin = txpool.to_etf_bin().expect("should serialize");
+        let result = from_etf_bin(&compressed_bin).expect("should deserialize");
 
         assert_eq!(result.get_name(), "txpool");
     }
@@ -598,9 +603,8 @@ mod tests {
     async fn test_peers_etf_roundtrip() {
         let peers = Peers { ips: vec!["192.168.1.1".to_string(), "10.0.0.1".to_string()] };
 
-        let etf_bin = peers.to_etf_bin().expect("should serialize");
-        let compressed = compress_to_vec(&etf_bin, CompressionLevel::DefaultLevel as u8);
-        let result = from_etf_bin(&compressed).expect("should deserialize");
+        let compressed_bin = peers.to_etf_bin().expect("should serialize");
+        let result = from_etf_bin(&compressed_bin).expect("should deserialize");
 
         assert_eq!(result.get_name(), "peers");
     }

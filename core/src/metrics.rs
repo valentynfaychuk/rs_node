@@ -182,13 +182,13 @@ pub fn inc_reassembly_errors(e: &crate::node::reassembler::Error) {
 }
 
 #[inline]
-pub fn inc_parsing_and_validation_errors(e: &crate::node::proto::Error) {
+pub fn inc_parsing_and_validation_errors(e: &crate::node::protocol::Error) {
     warn!(target = "metrics", "parsing-validation error: {e:?}");
     METRICS.etf_parsing_validation_error_count.fetch_add(1, Ordering::Relaxed);
 }
 
 #[inline]
-pub fn inc_handling_errors(e: &crate::node::proto::Error) {
+pub fn inc_handling_errors(e: &crate::node::protocol::Error) {
     warn!(target = "metrics", "handling error: {e:?}");
     METRICS.proto_handling_error_count.fetch_add(1, Ordering::Relaxed);
 }

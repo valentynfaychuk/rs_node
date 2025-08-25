@@ -1,7 +1,7 @@
 use crate::misc::blake3;
 use crate::misc::utils::TermMap;
-use crate::node::proto;
-use crate::node::proto::Proto;
+use crate::node::protocol;
+use crate::node::protocol::Proto;
 use eetf::{Atom, Term};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -66,17 +66,17 @@ impl Proto for Solution {
         Self::NAME
     }
 
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, proto::Error> {
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, protocol::Error> {
         let bin = map.get_binary("sol").ok_or(Error::Missing("sol"))?;
         Solution::from_etf_validated(bin).map_err(Into::into)
     }
 
-    async fn handle_inner(&self) -> Result<proto::Instruction, proto::Error> {
+    async fn handle_inner(&self) -> Result<protocol::Instruction, protocol::Error> {
         // cache the solution
-        Ok(proto::Instruction::Noop)
+        Ok(protocol::Instruction::Noop)
     }
 
-    fn to_etf_bin(&self) -> Result<Vec<u8>, proto::Error> {
+    fn to_etf_bin(&self) -> Result<Vec<u8>, protocol::Error> {
         // convert solution back to binary format
         let sol_bin = match self {
             Solution::V2(v2) => {
@@ -119,7 +119,7 @@ impl Proto for Solution {
 
         let term = Term::from(eetf::Map { map: m });
         let mut out = Vec::new();
-        term.encode(&mut out).map_err(proto::Error::EtfEncode)?;
+        term.encode(&mut out).map_err(protocol::Error::EtfEncode)?;
         Ok(out)
     }
 }

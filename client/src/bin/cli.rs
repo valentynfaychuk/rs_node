@@ -1,13 +1,14 @@
-use std::fs;
-
 use ama_core::bic::contract;
-use ama_core::config;
+use ama_core::config::{Config, read_b58_sk};
 use ama_core::consensus::tx;
-use ama_core::misc::bls12_381 as bls;
+use ama_core::misc::bls12_381;
 use bs58;
 use clap::{Parser, Subcommand};
+use client::get_ama_config;
 use rand::RngCore;
 use serde_json::Value as JsonValue;
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(author, version, about = "Amadeus blockchain CLI tool")]
@@ -28,18 +29,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Get public key from secret key file (Base58-encoded 64-byte secret key)
-    Getpk {
-        /// Path to secret key file
-        secret_key_file: String,
-    },
     /// Generate a new random secret secret key (64 bytes) and save to a file as Base58; prints derived pk
-    Gensk {
+    GenSk {
         /// Output path to write the secret key bytes
         out_file: String,
     },
+    /// Get public key from secret key file (Base58-encoded 64-byte secret key)
+    GetPk {},
     /// Build a transaction for contract function call
-    Buildtx {
+    BuildTx {
         /// Contract address (Base58) or name
         contract: String,
         /// Function name to call
@@ -50,17 +48,17 @@ enum Commands {
         attach_symbol: Option<String>,
         /// Optional attachment amount (required if attach_symbol is provided)
         attach_amount: Option<String>,
-        /// Optional path to secret key file
-        #[arg(long = "sk-file")]
-        sk_file: Option<String>,
+        /// Send the transaction to the network instead of just printing it
+        #[arg(long = "send")]
+        send: bool,
     },
     /// Build a transaction to deploy WASM contract
-    Deploytx {
+    DeployTx {
         /// Path to WASM file
         wasm_path: String,
-        /// Optional path to secret key file
-        #[arg(long = "sk-file")]
-        sk_file: Option<String>,
+        /// Send the transaction to the network instead of just printing it
+        #[arg(long = "send")]
+        send: bool,
     },
 }
 
@@ -90,70 +88,65 @@ fn parse_json_arg_elem(v: &JsonValue) -> Result<Vec<u8>, String> {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Getpk { secret_key_file } => {
-            handle_getpk(&secret_key_file);
-        }
-        Commands::Gensk { out_file } => {
-            handle_gensk(&out_file);
-        }
-        Commands::Buildtx { contract, function, args_json, attach_symbol, attach_amount, sk_file } => {
-            // Validate attachment arguments
-            if attach_symbol.is_some() && attach_amount.is_none() {
-                eprintln!("Error: attach_amount is required when attach_symbol is provided");
+        Commands::GenSk { out_file } => handle_gensk(&out_file),
+        Commands::GetPk {} => handle_getpk(&get_ama_config().await),
+        Commands::BuildTx { contract, function, args_json, attach_symbol, attach_amount, send } => {
+            if attach_symbol.is_some() != attach_amount.is_some() {
+                eprintln!("Error: attach_amount and attach_symbol must go together");
                 std::process::exit(2);
             }
-            if attach_symbol.is_none() && attach_amount.is_some() {
-                eprintln!("Error: attach_symbol is required when attach_amount is provided");
-                std::process::exit(2);
-            }
+
             handle_buildtx(
+                &get_ama_config().await,
                 &contract,
                 &function,
                 &args_json,
                 attach_symbol.as_deref(),
                 attach_amount.as_deref(),
-                sk_file.as_deref(),
-            );
+                send,
+            )
+            .await;
         }
-        Commands::Deploytx { wasm_path, sk_file } => {
-            handle_deploytx(&wasm_path, sk_file.as_deref());
-        }
-    }
-}
-
-fn handle_getpk(secret_key_file: &str) {
-    let sk_bytes = read_sk_from_file(secret_key_file);
-
-    match bls::get_public_key(&sk_bytes) {
-        Ok(pk) => {
-            println!("{}", bs58::encode(pk).into_string());
-            std::process::exit(0);
-        }
-        Err(e) => {
-            eprintln!("failed to derive public key: {}", e);
-            std::process::exit(2);
+        Commands::DeployTx { wasm_path, send } => {
+            handle_deploytx(&get_ama_config().await, &wasm_path, send).await;
         }
     }
 }
 
-fn handle_buildtx(
+fn handle_gensk(out_file: &str) {
+    // Generate a fresh random 64-byte sk and write as Base58 into file, print derived pk
+    let mut sk = [0u8; 64];
+    let mut rng = rand::rngs::OsRng;
+    rng.fill_bytes(&mut sk);
+    let b58 = bs58::encode(sk).into_string();
+    if let Err(e) = fs::write(out_file, &b58) {
+        eprintln!("failed to write sk file: {}", e);
+        std::process::exit(2);
+    }
+    let config = Config { root: "".into(), sk };
+    println!("generated random sk, your pk is {}", bs58::encode(config.get_pk()).into_string());
+    std::process::exit(0);
+}
+
+fn handle_getpk(config: &Config) {
+    println!("{}", bs58::encode(config.get_pk()).into_string());
+    std::process::exit(0);
+}
+
+async fn handle_buildtx(
+    config: &Config,
     contract: &str,
     function: &str,
     args_json: &str,
     attach_symbol: Option<&str>,
     attach_amount: Option<&str>,
-    sk_file: Option<&str>,
+    send: bool,
 ) {
-    // Determine trainer secret secret key: prefer secret key file if provided (Base58 64 bytes)
-    let trainer_sk = match sk_file {
-        Some(path) => read_sk_from_file(path),
-        None => config::trainer_sk(),
-    };
-
     // contract: if Base58 decodes successfully, use decoded bytes, else use raw bytes
     let contract_bytes = match bs58::decode(contract).into_vec() {
         Ok(b) => b,
@@ -194,7 +187,7 @@ fn handle_buildtx(
         };
 
     let tx_packed = tx::build(
-        &trainer_sk,
+        config,
         &contract_bytes,
         function,
         &args_vec,
@@ -202,57 +195,25 @@ fn handle_buildtx(
         attach_symbol_bytes.as_deref(),
         attach_amount_bytes.as_deref(),
     );
-    println!("{}", bs58::encode(tx_packed).into_string());
-    std::process::exit(0);
-}
 
-fn handle_gensk(out_file: &str) {
-    // Generate a fresh random 64-byte sk and write as Base58 into file, print derived pk
-    let mut sk = [0u8; 64];
-    let mut rng = rand::rngs::OsRng;
-    rng.fill_bytes(&mut sk);
-    let b58 = bs58::encode(sk).into_string();
-    if let Err(e) = fs::write(out_file, &b58) {
-        eprintln!("failed to write sk file: {}", e);
-        std::process::exit(2);
-    }
-    if let Ok(pk) = bls::get_public_key(&sk) {
-        println!("generated random sk, your pk is {}", bs58::encode(pk).into_string());
-    }
-    std::process::exit(0);
-}
-
-fn read_sk_from_file(path: &str) -> [u8; 64] {
-    let s = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("failed to read sk file '{}': {}", path, e);
-            std::process::exit(2);
+    if send {
+        match client::send_transaction(config, tx_packed).await {
+            Ok(()) => {
+                println!("Transaction sent successfully");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Failed to send transaction: {}", e);
+                std::process::exit(2);
+            }
         }
-    };
-    let s_trim = s.trim();
-    let bytes = match bs58::decode(s_trim).into_vec() {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("invalid Base58 sk in file '{}': {}", path, e);
-            std::process::exit(2);
-        }
-    };
-    match <[u8; 64]>::try_from(bytes.as_slice()) {
-        Ok(arr) => arr,
-        Err(_) => {
-            eprintln!("sk must decode to exactly 64 bytes");
-            std::process::exit(2);
-        }
+    } else {
+        println!("{}", bs58::encode(tx_packed).into_string());
+        std::process::exit(0);
     }
 }
 
-fn handle_deploytx(wasm_path: &str, sk_file: Option<&str>) {
-    let trainer_sk = match sk_file {
-        Some(path) => read_sk_from_file(path),
-        None => config::trainer_sk(),
-    };
-
+async fn handle_deploytx(config: &Config, wasm_path: &str, send: bool) {
     let wasmbytes = match fs::read(wasm_path) {
         Ok(b) => b,
         Err(e) => {
@@ -268,7 +229,21 @@ fn handle_deploytx(wasm_path: &str, sk_file: Option<&str>) {
     }
 
     let args_vec = vec![wasmbytes];
-    let tx_packed = tx::build(&trainer_sk, b"Contract", "deploy", &args_vec, None, None, None);
-    println!("{}", bs58::encode(tx_packed).into_string());
-    std::process::exit(0);
+    let tx_packed = tx::build(config, b"Contract", "deploy", &args_vec, None, None, None);
+
+    if send {
+        match client::send_transaction(config, tx_packed).await {
+            Ok(()) => {
+                println!("Contract deployment sent successfully");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Failed to send contract deployment: {}", e);
+                std::process::exit(2);
+            }
+        }
+    } else {
+        println!("{}", bs58::encode(tx_packed).into_string());
+        std::process::exit(0);
+    }
 }

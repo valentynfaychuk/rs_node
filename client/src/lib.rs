@@ -1,16 +1,77 @@
 mod dump_replay;
 
+use ama_core::config::{Config, read_b58_sk};
+use ama_core::node::ReedSolomonReassembler;
+use ama_core::node::protocol::{Proto, TxPool};
 pub use dump_replay::DumpReplaySocket;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use tokio::net::UdpSocket;
+
+pub async fn init_ama_core() {}
 
 pub fn init_tracing() {
-    // Minimal, dependency-light logging initialization.
-    // Prefer not to fail if a subscriber is already set elsewhere.
-    let _ = tracing_subscriber::fmt::try_init();
+    tracing_subscriber::fmt::try_init().expect("tracing init");
 
-    // Install a panic hook that reports to stderr without requiring tracing macros.
+    // panic hook that reports to stderr without requiring tracing macros
     std::panic::set_hook(Box::new(|pi| {
         eprintln!("panic: {}", pi);
     }));
+}
+
+pub async fn get_ama_config() -> Config {
+    let root = std::env::var("ROOT").unwrap_or_else(|_| "run.local".into());
+
+    // Check for AMA_SK environment variable first
+    if let Ok(sk_b58) = std::env::var("SK") {
+        match bs58::decode(sk_b58.trim()).into_vec() {
+            Ok(bytes) => {
+                if let Ok(sk) = <[u8; 64]>::try_from(bytes.as_slice()) {
+                    return Config { root: root.into(), sk };
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    // If no valid AMA_SK env var, generate new config
+    Config::generate_new(Some(root.into())).await
+}
+
+/// Get UDP address from environment variable or default
+pub fn get_udp_addr() -> SocketAddr {
+    std::env::var("UDP_ADDR").unwrap_or_else(|_| "127.0.0.1:36969".to_string()).parse().expect("valid UDP_ADDR")
+}
+
+/// Send transaction to network via UDP, replicating Elixir reference behavior
+///
+/// Reference logic from NodeGen.broadcast(:txpool, :trainers, [[tx_packed]]):
+/// 1. Create NodeProto.txpool(txs_packed) message
+/// 2. Compress with NodeProto.compress()  
+/// 3. Encrypt/shard with NodeProto.encrypt_message_v2()
+/// 4. Send each shard via UDP
+pub async fn send_transaction(config: &Config, tx_packed: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+    // Create NodeProto.txpool(txs_packed) message - mimic Elixir's [[tx_packed]]
+    let txpool_proto = TxPool { valid_txs: vec![tx_packed] };
+
+    // Compress the message (NodeProto.compress equivalent)
+    let compressed_msg = txpool_proto.to_etf_bin()?;
+
+    // Create MessageV2 shards (NodeProto.encrypt_message_v2 equivalent)
+    let message_shards = ReedSolomonReassembler::build_shards(config, compressed_msg, "1.1.1")?;
+
+    // Send each shard via UDP
+    let addr = get_udp_addr();
+    let socket = UdpSocket::bind("0.0.0.0:0").await?; // Bind to any available port
+    let shard_count = message_shards.len();
+
+    for msg in message_shards {
+        let msg_bytes: Vec<u8> = msg.try_into()?;
+        socket.send_to(&msg_bytes, addr).await?;
+    }
+
+    println!("Sent {} shards to {}", shard_count, addr);
+    Ok(())
 }
 
 pub const PING: [u8; 1016] = [

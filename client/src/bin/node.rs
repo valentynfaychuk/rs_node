@@ -5,22 +5,17 @@ use tokio::time::timeout;
 
 use ama_core::node::ReedSolomonReassembler;
 use ama_core::node::msg_v2::MessageV2;
-use ama_core::node::proto::{Instruction, from_etf_bin};
-use client::{DumpReplaySocket, PING, init_tracing};
+use ama_core::node::protocol::{Instruction, from_etf_bin};
+use client::{DumpReplaySocket, PING, get_ama_config, get_udp_addr, init_tracing};
 
 use plot::{serve, state::AppState};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    // Initialize tracing subscriber for logging.
     init_tracing();
-    ama_core::init(None).await.expect("core init");
 
     // Target UDP address of an Amadeus node.
-    let addr: SocketAddr = std::env::var("UDP_ADDR")
-        .unwrap_or_else(|_| "84.217.100.57:36969".to_string())
-        .parse()
-        .expect("valid UDP_ADDR");
+    let addr = get_udp_addr();
 
     // Bind a local UDP socket (Tokio).
     let socket = UdpSocket::bind("0.0.0.0:36969").await?;
@@ -39,6 +34,8 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
+    let config = get_ama_config().await;
+    ama_core::init(&config).await.expect("core init");
     let rs_reassembler = ReedSolomonReassembler::new();
     rs_reassembler.start_periodic_cleanup();
 

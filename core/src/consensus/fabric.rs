@@ -1,4 +1,3 @@
-use crate::config;
 use crate::consensus;
 use crate::consensus::attestation::Attestation;
 use crate::consensus::entry::Entry;
@@ -189,16 +188,16 @@ fn unpack_consensus_map(bin: &[u8]) -> Result<HashMap<[u8; 32], StoredConsensus>
 
 /// If DB has an attestation for entry_hash signed by a different trainer than current
 /// config::trainer_pk, then resign with current keys, update DB and return new attestation.
-pub fn get_or_resign_my_attestation(entry_hash: &[u8; 32]) -> Result<Option<Attestation>, Error> {
+pub fn get_or_resign_my_attestation(config: &crate::config::Config, entry_hash: &[u8; 32]) -> Result<Option<Attestation>, Error> {
     let packed = rocksdb::get(CF_MY_ATTESTATION_FOR_ENTRY, entry_hash)?;
     let Some(bin) = packed else { return Ok(None) };
     let att = Attestation::from_etf_bin(&bin)?;
-    if att.signer == config::trainer_pk() {
+    if att.signer == config.get_pk() {
         return Ok(Some(att));
     }
     println!("imported database, resigning attestation {}", bs58::encode(entry_hash).into_string());
-    let pk = config::trainer_pk();
-    let sk = config::trainer_sk();
+    let pk = config.get_pk();
+    let sk = config.get_sk();
     let new_a = Attestation::sign_with(&pk, &sk, entry_hash, &att.mutations_hash)?;
     let packed = new_a.to_etf_bin()?;
     rocksdb::put(CF_MY_ATTESTATION_FOR_ENTRY, entry_hash, packed.as_slice())?;

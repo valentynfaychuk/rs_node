@@ -30,6 +30,13 @@ brew install rocksdb # or on MacOS (this will install `rocksdb_ldb` and `rocksdb
 ## Testing
 
 Check `.cargo/config.toml` for command aliases.
+Environment variables are:
+
+- `UDP_ADDR` - address of the node to connect to, default `127.0.0.1:36969`
+- `ROOT` - root directory to use, default `run.local`
+- `SK` - secret key to use, by default is generated as `$ROOT/sk`
+- `UDP_DUMP` - file to dump the UDP traffic to
+- `UDP_REPLAY` - file to replay the UDP traffic from
 
 ### Unittests
 
@@ -49,8 +56,13 @@ CLI is a client that can deploy a contract or send transactions.
 Examples of usage:
 
 ```bash
-cargo cli gensk trainer-sk
-cargo cli getpk trainer-sk
+cargo cli gen-sk test
+cargo cli get-pk
+SK=test cargo cli get-pk
+cargo cli build-tx Contract test "[]"
+cargo cli deploy-tx contracts/simple_counter.wasm
+UDP_ADDR="127.0.0.1:36969" SK=test cargo cli build-tx Contract test "[]" --send
+UDP_ADDR="127.0.0.1:36969" SK=test cargo cli deploy-tx contracts/simple_counter.wasm --send
 ```
 
 ### Node simulation (NATIVE)

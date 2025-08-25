@@ -6,8 +6,8 @@ use crate::consensus::{fabric, tx};
 use crate::misc::bls12_381;
 use crate::misc::utils::{TermExt, TermMap, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
 use crate::misc::{archiver, blake3};
-use crate::node::proto;
-use crate::node::proto::Proto;
+use crate::node::protocol;
+use crate::node::protocol::Proto;
 use crate::{bic, consensus};
 use eetf::{Atom, BigInteger, Binary, Map, Term};
 use std::collections::HashMap;
@@ -185,18 +185,18 @@ impl Proto for Entry {
         Self::NAME
     }
 
-    fn from_etf_map_validated(map: TermMap) -> Result<Self, proto::Error> {
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, protocol::Error> {
         let bin = map.get_binary("entry_packed").ok_or(Error::BadEtf("entry_packed"))?;
         Entry::from_etf_bin_validated(bin, ENTRY_SIZE).map_err(Into::into)
     }
 
-    async fn handle_inner(&self) -> Result<proto::Instruction, proto::Error> {
+    async fn handle_inner(&self) -> Result<protocol::Instruction, protocol::Error> {
         self.handle_inner().await.map_err(Into::into)
     }
 
-    fn to_etf_bin(&self) -> Result<Vec<u8>, proto::Error> {
+    fn to_etf_bin(&self) -> Result<Vec<u8>, protocol::Error> {
         // encode entry as bincode first
-        let entry_bin: Vec<u8> = self.clone().try_into().map_err(|_| proto::Error::BadEtf("entry"))?;
+        let entry_bin: Vec<u8> = self.clone().try_into().map_err(|_| protocol::Error::BadEtf("entry"))?;
 
         let mut m = HashMap::new();
         m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
@@ -204,7 +204,7 @@ impl Proto for Entry {
 
         let term = Term::from(Map { map: m });
         let mut out = Vec::new();
-        term.encode(&mut out).map_err(proto::Error::EtfEncode)?;
+        term.encode(&mut out).map_err(protocol::Error::EtfEncode)?;
         Ok(out)
     }
 }
@@ -223,7 +223,7 @@ impl fmt::Debug for Entry {
 impl Entry {
     pub const NAME: &'static str = "entry";
 
-    async fn handle_inner(&self) -> Result<proto::Instruction, Error> {
+    async fn handle_inner(&self) -> Result<protocol::Instruction, Error> {
         let height = self.header.height;
 
         // compute rooted_tip_height if possible
@@ -246,7 +246,7 @@ impl Entry {
             archiver::store(bin, format!("epoch-{}", epoch), format!("entry-{}", height)).await?;
         }
 
-        Ok(proto::Instruction::Noop)
+        Ok(protocol::Instruction::Noop)
     }
 
     pub fn from_etf_bin_validated(bin: &[u8], entry_size_limit: usize) -> Result<Entry, Error> {

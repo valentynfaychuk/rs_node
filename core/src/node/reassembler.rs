@@ -72,45 +72,68 @@ impl ReedSolomonReassembler {
         Self { reorg: Arc::new(Mutex::new(HashMap::new())) }
     }
 
-    /// Create a signed MessageV2 from given payload and header fields.
+    /// Create signed MessageV2 shards from payload, implementing symmetric sharding to add_shard.
     ///
-    /// Reference: node.local/ex encrypt_message_v2 signs Blake3(pk || payload) with DST_NODE.
-    pub fn build_message_v2(
-        payload: Vec<u8>,
-        shard_index: u16,
-        shard_total: u16,
-        original_size: u32,
-        ts_nano: u64,
-        version: &str,
-    ) -> Result<MessageV2, Error> {
-        let pk = crate::config::trainer_pk();
-        let trainer_sk = crate::config::trainer_sk();
+    /// Reference: node.local/ex encrypt_message_v2 logic:
+    /// - Small messages (< 1300 bytes): single shard with shard_total=1  
+    /// - Large messages: Reed-Solomon encode with data_shards = parity_shards = (total_bytes + 1023) / 1024
+    /// - Sign Blake3(pk || original_payload) once, use same signature for all shards
+    pub fn build_shards(config: &crate::config::Config, payload: Vec<u8>, version: &str) -> Result<Vec<MessageV2>, Error> {
+        let pk = config.get_pk();
+        let trainer_sk = config.get_sk();
+        let ts_nano = get_unix_nanos_now() as u64;
+        let original_size = payload.len() as u32;
 
-        // sign Blake3(pk || payload) per reference implementation
+        // sign Blake3(pk || payload) once for the entire message
         let mut hasher = blake3::Hasher::new();
         hasher.update(&pk);
         hasher.update(&payload);
         let msg_hash = hasher.finalize();
-
         let signature = bls12_381::sign(&trainer_sk, &msg_hash, DST_NODE)?;
 
-        Ok(MessageV2 {
-            version: version.to_string(),
-            pk,
-            signature,
-            shard_index,
-            shard_total,
-            ts_nano,
-            original_size,
-            payload,
-        })
-    }
+        // reference: if byte_size(msg_compressed) < 1300, single shard
+        if payload.len() < 1300 {
+            return Ok(vec![MessageV2 {
+                version: version.to_string(),
+                pk,
+                signature,
+                shard_index: 0,
+                shard_total: 1,
+                ts_nano,
+                original_size,
+                payload,
+            }]);
+        }
 
-    /// Convenience: build a single-shard MessageV2 (shard_total=2) using current time and payload length
-    pub fn build_single_shard_message_v2(payload: Vec<u8>, version: &str) -> Result<MessageV2, Error> {
-        let ts_nano = get_unix_nanos_now() as u64;
-        let original_size = payload.len() as u32;
-        Self::build_message_v2(payload, 0, 2, original_size, ts_nano, version)
+        // large message: Reed-Solomon sharding
+        // reference: shards = div(byte_size(msg_compressed)+1023, 1024)
+        let data_shards = payload.len().div_ceil(1024);
+        let parity_shards = data_shards;
+        let total_shards = (data_shards + parity_shards) as u16;
+
+        let mut rs_resource = ReedSolomonResource::new(data_shards, parity_shards)?;
+        let encoded_shards = rs_resource.encode_shards(&payload)?;
+
+        // reference: |> Enum.take(shards+1+div(shards,4))
+        // take data shards + some parity shards (not all)
+        let shards_to_send = data_shards + 1 + (data_shards / 4);
+        let limited_shards: Vec<_> = encoded_shards.into_iter().take(shards_to_send).collect();
+
+        let mut messages = Vec::new();
+        for (shard_index, shard_payload) in limited_shards {
+            messages.push(MessageV2 {
+                version: version.to_string(),
+                pk,
+                signature,
+                shard_index: shard_index as u16,
+                shard_total: total_shards,
+                ts_nano,
+                original_size,
+                payload: shard_payload,
+            });
+        }
+
+        Ok(messages)
     }
 
     /// This starts a timer that clears outdated reassemblies
@@ -206,5 +229,159 @@ impl ReedSolomonReassembler {
         bls12_381::verify(&key.pk, signature, &msg_hash, DST_NODE)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // test-specific functions that use consistent keypair
+    fn test_trainer_sk() -> [u8; 64] {
+        // fixed test secret key for deterministic results
+        [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+            30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+            57, 58, 59, 60, 61, 62, 63, 64,
+        ]
+    }
+
+    fn test_trainer_pk() -> [u8; 48] {
+        // derive public key from the test secret key
+        bls12_381::get_public_key(&test_trainer_sk()).unwrap()
+    }
+
+    // test version of build_message_v2 that uses consistent test keys
+    fn test_build_message_v2(payload: Vec<u8>, version: &str) -> Result<Vec<MessageV2>, Error> {
+        let pk = test_trainer_pk();
+        let trainer_sk = test_trainer_sk();
+        let ts_nano = get_unix_nanos_now() as u64;
+        let original_size = payload.len() as u32;
+
+        // sign Blake3(pk || payload) once for the entire message
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&pk);
+        hasher.update(&payload);
+        let msg_hash = hasher.finalize();
+        let signature = bls12_381::sign(&trainer_sk, &msg_hash, DST_NODE)?;
+
+        // reference: if byte_size(msg_compressed) < 1300, single shard
+        if payload.len() < 1300 {
+            return Ok(vec![MessageV2 {
+                version: version.to_string(),
+                pk,
+                signature,
+                shard_index: 0,
+                shard_total: 1,
+                ts_nano,
+                original_size,
+                payload,
+            }]);
+        }
+
+        // large message: Reed-Solomon sharding
+        let data_shards = payload.len().div_ceil(1024);
+        let parity_shards = data_shards;
+        let total_shards = (data_shards + parity_shards) as u16;
+
+        let mut rs_resource = ReedSolomonResource::new(data_shards, parity_shards)?;
+        let encoded_shards = rs_resource.encode_shards(&payload)?;
+
+        let shards_to_send = data_shards + 1 + (data_shards / 4);
+        let limited_shards: Vec<_> = encoded_shards.into_iter().take(shards_to_send).collect();
+
+        let mut messages = Vec::new();
+        for (shard_index, shard_payload) in limited_shards {
+            messages.push(MessageV2 {
+                version: version.to_string(),
+                pk,
+                signature,
+                shard_index: shard_index as u16,
+                shard_total: total_shards,
+                ts_nano,
+                original_size,
+                payload: shard_payload,
+            });
+        }
+
+        Ok(messages)
+    }
+
+    #[tokio::test]
+    async fn test_message_v2_roundtrip_small() {
+        // test small message (single shard)
+        let payload = b"hello world".to_vec();
+        let version = "test";
+
+        let messages = test_build_message_v2(payload.clone(), version).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].shard_total, 1);
+        assert_eq!(messages[0].payload, payload);
+
+        let reassembler = ReedSolomonReassembler::new();
+        let result = reassembler.add_shard(&messages[0]).await.unwrap();
+        assert_eq!(result, Some(payload));
+    }
+
+    #[tokio::test]
+    async fn test_message_v2_roundtrip_large() {
+        // test large message (multiple shards)
+        let payload = vec![42u8; 3000]; // larger than 1300 bytes
+        let version = "test";
+
+        let messages = test_build_message_v2(payload.clone(), version).unwrap();
+        assert!(messages.len() > 1);
+        assert!(messages[0].shard_total > 1);
+
+        // all messages should have same metadata
+        for msg in &messages {
+            assert_eq!(msg.version, version);
+            assert_eq!(msg.pk, messages[0].pk);
+            assert_eq!(msg.ts_nano, messages[0].ts_nano);
+            assert_eq!(msg.shard_total, messages[0].shard_total);
+            assert_eq!(msg.original_size, payload.len() as u32);
+            assert_eq!(msg.signature, messages[0].signature);
+        }
+
+        let reassembler = ReedSolomonReassembler::new();
+        let mut result = None;
+
+        // add shards one by one
+        for msg in &messages {
+            if let Some(restored) = reassembler.add_shard(msg).await.unwrap() {
+                result = Some(restored);
+                break;
+            }
+        }
+
+        assert_eq!(result, Some(payload));
+    }
+
+    #[tokio::test]
+    async fn test_message_v2_partial_shards() {
+        // test that we can recover with missing shards
+        let payload = vec![123u8; 4000];
+        let version = "test";
+
+        let messages = test_build_message_v2(payload.clone(), version).unwrap();
+        assert!(messages.len() > 2);
+
+        // calculate data_shards to know minimum needed for recovery
+        let data_shards = payload.len().div_ceil(1024);
+        println!("Generated {} messages, data_shards={}", messages.len(), data_shards);
+
+        let reassembler = ReedSolomonReassembler::new();
+
+        // take first data_shards worth of messages to ensure we can recover
+        let mut restored = None;
+        for (_i, msg) in messages.iter().enumerate().take(data_shards + 1) {
+            if let Some(result) = reassembler.add_shard(msg).await.unwrap() {
+                restored = Some(result);
+                break;
+            }
+        }
+
+        // should be able to recover with minimum required shards
+        assert_eq!(restored, Some(payload));
     }
 }

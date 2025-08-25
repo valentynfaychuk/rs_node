@@ -1,4 +1,3 @@
-use crate::config;
 use crate::consensus::agg_sig::DST_ATT;
 use crate::consensus::entry::Entry;
 use crate::consensus::{self, fabric};
@@ -113,10 +112,10 @@ impl Consensus {
 }
 
 /// Return true if our trainer_pk is included in trainers_for_height(chain_height()+1)
-pub fn is_trainer() -> bool {
+pub fn is_trainer(config: &crate::config::Config) -> bool {
     let Some(h) = get_chain_height().ok() else { return false };
     let Some(trainers) = consensus::trainers_for_height(h + 1) else { return false };
-    trainers.iter().any(|pk| pk == &config::trainer_pk())
+    trainers.iter().any(|pk| pk == &config.get_pk())
 }
 
 /// Select trainer for a slot from the roster for the corresponding height
@@ -139,9 +138,9 @@ pub fn trainer_for_slot_next() -> Option<[u8; 48]> {
     trainer_for_slot(h + 1, h + 1)
 }
 
-pub fn trainer_for_slot_next_me() -> bool {
+pub fn trainer_for_slot_next_me(config: &crate::config::Config) -> bool {
     match trainer_for_slot_next() {
-        Some(pk) => pk == config::trainer_pk(),
+        Some(pk) => pk == config.get_pk(),
         None => false,
     }
 }
