@@ -1,164 +1,156 @@
-use bincode::error::{DecodeError, EncodeError};
 use bincode::{config::standard, decode_from_slice, encode_to_vec};
-use std::fs::{File, OpenOptions};
-use std::io;
-use std::io::{Read, Write};
+use std::io::Result;
 use std::net::SocketAddr;
-use std::sync::{Mutex, OnceLock};
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
+use tokio::sync::{Mutex, OnceCell};
 use tokio::time::{Duration, sleep};
 
 #[async_trait::async_trait]
 pub trait DumpReplaySocket: Send + Sync {
-    async fn dump_replay_recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)>;
+    async fn dump_replay_recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr)>;
 }
 
 #[async_trait::async_trait]
 impl DumpReplaySocket for UdpSocket {
-    async fn dump_replay_recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+    async fn dump_replay_recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr)> {
         // use the replay file instead of the real socket if set
         // fallback to real UDP socket when no replay file
-        let (len, src) = match udp_replay().as_ref() {
-            Some(state_mutex) => recv_from_replay(state_mutex, buf).await?,
+        let (len, src) = match udp_replay().await {
+            Some(state) => state.lock().await.recv_from_replay(buf).await?,
             None => self.recv_from(buf).await?,
         };
 
-        // optionally dump the received datagram (disabled while replaying to avoid extra I/O)
-        maybe_dump_datagram(src, &buf[..len]);
+        maybe_dump_datagram(src, &buf[..len]).await;
 
         Ok((len, src))
     }
 }
 
+const CHUNK_SIZE: usize = 10 * 1024 * 1024;
+
 struct ReplayState {
-    data: Vec<u8>,
-    position: usize,
+    file: File,
+    chunk: Vec<u8>,
+    file_pos: usize,
+    chunk_pos: usize,
 }
 
-fn udp_replay() -> &'static Option<Mutex<ReplayState>> {
-    static UDP_REPLAY: OnceLock<Option<Mutex<ReplayState>>> = OnceLock::new();
-    UDP_REPLAY.get_or_init(|| match std::env::var("UDP_REPLAY") {
-        Ok(path) => match std::fs::read(&path) {
-            Ok(data) => {
-                println!("replaying UDP packets from {path} ({} bytes loaded)", data.len());
-                Some(Mutex::new(ReplayState { data, position: 0 }))
-            }
-            Err(e) => {
-                eprintln!("failed to read UDP_REPLAY file: {e}");
-                None
-            }
-        },
-        Err(_) => None,
-    })
-}
+impl ReplayState {
+    async fn recv_from_replay(&mut self, buf: &mut [u8]) -> Result<(usize, SocketAddr)> {
+        loop {
+            let from_pos = self.chunk_pos;
 
-async fn recv_from_replay(state_mutex: &Mutex<ReplayState>, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-    loop {
-        let result = {
-            let mut state = state_mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-
-            // check if we've reached the end of the data
-            if state.position >= state.data.len() {
-                None
-            } else {
-                // try to decode a datagram from the current position
-                let remaining = &state.data[state.position..];
-                match decode_from_slice::<UdpLoggedDatagram, _>(remaining, standard()) {
-                    Ok((dgram, consumed)) => {
-                        state.position += consumed;
-                        let payload = dgram.data();
-                        let copy_len = std::cmp::min(payload.len(), buf.len());
-                        buf[..copy_len].copy_from_slice(&payload[..copy_len]);
-                        Some(Ok((copy_len, dgram.src())))
-                    }
-                    Err(_) => {
-                        // if decode fails and we're at the end, we're done
-                        if state.position >= state.data.len() {
-                            None
-                        } else {
-                            // skip a byte and try again (corrupted data)
-                            state.position += 1;
-                            continue;
-                        }
-                    }
-                }
+            if let Ok((dgram, consumed)) = decode_from_slice::<DatagramDump, _>(&self.chunk[from_pos..], standard()) {
+                self.chunk_pos += consumed;
+                buf[..dgram.data.len()].copy_from_slice(&dgram.data);
+                return Ok((dgram.data.len(), dgram.src));
             }
-        };
 
-        match result {
-            Some(data) => return data,
-            None => {
+            // decode failed, try to load next chunk
+            if self.read_next_chunk_with_remainder(from_pos).await? == 0 {
+                // end of file reached, wait for more data (tail -f)
                 sleep(Duration::from_secs(1)).await;
-                continue;
             }
+        }
+    }
+
+    /// Read next chunk and preserve remaining bytes from current buffer
+    async fn read_next_chunk_with_remainder(&mut self, from_pos: usize) -> Result<usize> {
+        if from_pos < self.chunk.len() {
+            let remainder = self.chunk[from_pos..].to_vec();
+
+            self.chunk.clear();
+            self.chunk.extend_from_slice(&remainder);
+            self.chunk.resize(CHUNK_SIZE, 0);
+
+            let bytes_read = self.file.read(&mut self.chunk[remainder.len()..]).await?;
+            self.chunk.truncate(remainder.len() + bytes_read);
+            self.file_pos += bytes_read;
+            self.chunk_pos = 0;
+
+            Ok(bytes_read)
+        } else {
+            // previous chunk was consumed fully
+
+            self.chunk.clear();
+            self.chunk.resize(CHUNK_SIZE, 0);
+
+            let bytes_read = self.file.read(&mut self.chunk).await?;
+            self.chunk.truncate(bytes_read);
+            self.file_pos += bytes_read;
+            self.chunk_pos = 0;
+
+            Ok(bytes_read)
         }
     }
 }
 
-fn maybe_dump_datagram(src: SocketAddr, payload: &[u8]) {
-    // Avoid re-dumping while replaying to prevent extra I/O and potential feedback loops
-    // if udp_replay().as_ref().is_some() {
-    //     return;
-    // }
-    if let Some(file_mutex) = udp_dump().as_ref() {
-        if let Ok(mut f) = file_mutex.lock() {
-            let dgram = UdpLoggedDatagram::new(src, payload.to_vec());
-            if let Ok(bytes) = Vec::<u8>::try_from(dgram) {
-                let _ = f.write_all(&bytes);
+async fn udp_replay() -> Option<&'static Mutex<ReplayState>> {
+    static UDP_REPLAY: OnceCell<Option<Mutex<ReplayState>>> = OnceCell::const_new();
+    UDP_REPLAY
+        .get_or_init(|| async {
+            match std::env::var("UDP_REPLAY") {
+                Ok(path) => match File::open(&path).await {
+                    Ok(file) => {
+                        let chunk = Vec::with_capacity(CHUNK_SIZE);
+                        let mut state = ReplayState { file, chunk, file_pos: 0, chunk_pos: 0 };
+                        let bytes = state
+                            .read_next_chunk_with_remainder(0)
+                            .await
+                            .inspect_err(|e| eprintln!("failed to read from UDP_REPLAY file: {e}"))
+                            .ok()?;
+
+                        println!("replaying UDP packets from {path} (first chunk {bytes})");
+                        Some(Mutex::new(state))
+                    }
+                    Err(e) => {
+                        eprintln!("failed to open UDP_REPLAY file: {e}");
+                        None
+                    }
+                },
+                Err(_) => None,
             }
+        })
+        .await
+        .as_ref()
+}
+
+async fn maybe_dump_datagram(src: SocketAddr, payload: &[u8]) {
+    if let Some(file_mutex) = udp_dump().await {
+        let mut f = file_mutex.lock().await;
+        let dgram = DatagramDump { src, data: payload.to_vec() };
+        if let Ok(bytes) = encode_to_vec(&dgram, standard()) {
+            let _ = f.write_all(&bytes).await;
         }
     }
 }
 
-fn udp_dump() -> &'static Option<Mutex<File>> {
-    static UDP_DUMP: OnceLock<Option<Mutex<File>>> = OnceLock::new();
-    UDP_DUMP.get_or_init(|| match std::env::var("UDP_DUMP") {
-        Ok(path) => match OpenOptions::new().create(true).append(true).open(&path) {
-            Ok(file) => {
-                println!("dumping UDP packets to {path}");
-                Some(Mutex::new(file))
+async fn udp_dump() -> Option<&'static Mutex<File>> {
+    static UDP_DUMP: OnceCell<Option<Mutex<File>>> = OnceCell::const_new();
+    UDP_DUMP
+        .get_or_init(|| async {
+            match std::env::var("UDP_DUMP") {
+                Ok(path) => match OpenOptions::new().create(true).append(true).open(&path).await {
+                    Ok(file) => {
+                        println!("dumping UDP packets to {path}");
+                        Some(Mutex::new(file))
+                    }
+                    Err(e) => {
+                        eprintln!("failed to open UDP_DUMP file: {e}");
+                        None
+                    }
+                },
+                Err(_) => None,
             }
-            Err(e) => {
-                eprintln!("failed to open UDP_DUMP file: {e}");
-                None
-            }
-        },
-        Err(_) => None,
-    })
+        })
+        .await
+        .as_ref()
 }
 
-#[derive(Clone, bincode::Encode, bincode::Decode)]
-pub struct UdpLoggedDatagram {
+#[derive(bincode::Encode, bincode::Decode)]
+pub struct DatagramDump {
     src: SocketAddr,
     data: Vec<u8>,
-}
-
-impl UdpLoggedDatagram {
-    pub fn new(src: SocketAddr, data: Vec<u8>) -> Self {
-        Self { src, data }
-    }
-
-    pub fn src(&self) -> SocketAddr {
-        self.src
-    }
-
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
-}
-
-impl TryFrom<UdpLoggedDatagram> for Vec<u8> {
-    type Error = EncodeError;
-
-    fn try_from(dgram: UdpLoggedDatagram) -> Result<Self, Self::Error> {
-        encode_to_vec(&dgram, standard())
-    }
-}
-
-impl TryFrom<&[u8]> for UdpLoggedDatagram {
-    type Error = DecodeError;
-
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        Ok(decode_from_slice(bytes, standard())?.0)
-    }
 }
