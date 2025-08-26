@@ -5,6 +5,7 @@ mod views {
     pub mod entries;
     pub mod entry;
     pub mod layout;
+    pub mod metrics;
     pub mod peers;
 }
 
@@ -25,13 +26,16 @@ pub async fn serve(_addr: &str, state: &AppState) -> anyhow::Result<()> {
             <ul>
               <li><a href="/entries">Entries</a></li>
               <li><a href="/peers">Peers</a></li>
+              <li><a href="/metrics">Metrics</a></li>
             </ul>
         "#,
                 ))
             }),
         );
 
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], 3000));
+    let port: u16 = std::env::var("HTTP_PORT").ok().and_then(|s| s.parse::<u16>().ok()).unwrap_or(3000);
+
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     println!("listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

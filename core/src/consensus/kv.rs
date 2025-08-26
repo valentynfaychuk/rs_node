@@ -1,4 +1,4 @@
-use crate::misc::rocksdb;
+use crate::utils::rocksdb;
 use blake3;
 use std::collections::VecDeque;
 
@@ -313,7 +313,7 @@ mod tests {
             let test_db_path = "target/test_consensus_kv_db";
             std::fs::create_dir_all(test_db_path).unwrap();
             tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let _ = crate::misc::rocksdb::init("target/test_consensus_kv").await;
+                let _ = crate::utils::rocksdb::init("target/test_consensus_kv").await;
             });
         });
     }

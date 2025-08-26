@@ -1,11 +1,10 @@
 mod dump_replay;
 
-use ama_core::config::{Config, read_b58_sk};
+use ama_core::config::Config;
 use ama_core::node::ReedSolomonReassembler;
-use ama_core::node::protocol::{Proto, TxPool};
+use ama_core::node::protocol::{Protocol, TxPool};
 pub use dump_replay::DumpReplaySocket;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use tokio::net::UdpSocket;
 
 pub async fn init_ama_core() {}

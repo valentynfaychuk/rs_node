@@ -1,335 +1,182 @@
+use crate::utils::misc::{Typename, get_unix_secs_now};
 use once_cell::sync::Lazy;
+use scc::HashIndex;
+use scc::ebr::Guard;
+use serde_json::Value;
+use std::collections::HashMap as StdHashMap;
+use std::fmt::Debug;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use tracing::warn;
 
-static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
+pub static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
 
 pub struct Metrics {
-    // Core protocol messages
-    ping_count: AtomicU64,
-    pong_count: AtomicU64,
-    who_are_you_count: AtomicU64,
-
-    // Transaction and peer management
-    txpool_count: AtomicU64,
-    peers_count: AtomicU64,
-
-    // Blockchain operations
-    sol_count: AtomicU64,
-    entry_count: AtomicU64,
-    attestation_bulk_count: AtomicU64,
-    consensus_bulk_count: AtomicU64,
-
-    // Catchup operations
-    catchup_entry_count: AtomicU64,
-    catchup_tri_count: AtomicU64,
-    catchup_bi_count: AtomicU64,
-    catchup_attestation_count: AtomicU64,
-
-    // Special business operations
-    special_business_count: AtomicU64,
-    special_business_reply_count: AtomicU64,
-
-    // Entry solicitation
-    solicit_entry_count: AtomicU64,
-    solicit_entry2_count: AtomicU64,
-
-    // Error counters
-    v2_error_count: AtomicU64,                     // Failed to parse MessageV2
-    reassembly_error_count: AtomicU64,             // Reed-Solomon shard assembly
-    etf_parsing_validation_error_count: AtomicU64, // ETF decoding and validation
-    proto_handling_error_count: AtomicU64,         // Protocol message handling
-    other_error_count: AtomicU64,                  // Miscellaneous/other errors
-
     // Total packets counter
-    total_v2udp_packets_count: AtomicU64, // Total UDP packets received
+    incoming_bytes: AtomicU64,   // Total bytes received
+    incoming_packets: AtomicU64, // Total UDP packets received
+
+    // Handled protocol message counters by name (dynamic)
+    handled_protos: HashIndex<String, Arc<AtomicU64>>,
+
+    // Error counters by type name (dynamic)
+    errors: HashIndex<String, Arc<AtomicU64>>,
+
+    // Start time for uptime calculation
+    start_time: u64,
 }
 
 impl Metrics {
     fn new() -> Self {
+        let handled_protos = HashIndex::new();
+        let errors = HashIndex::new();
         Self {
-            ping_count: AtomicU64::new(0),
-            pong_count: AtomicU64::new(0),
-            who_are_you_count: AtomicU64::new(0),
-            txpool_count: AtomicU64::new(0),
-            peers_count: AtomicU64::new(0),
-            sol_count: AtomicU64::new(0),
-            entry_count: AtomicU64::new(0),
-            attestation_bulk_count: AtomicU64::new(0),
-            consensus_bulk_count: AtomicU64::new(0),
-            catchup_entry_count: AtomicU64::new(0),
-            catchup_tri_count: AtomicU64::new(0),
-            catchup_bi_count: AtomicU64::new(0),
-            catchup_attestation_count: AtomicU64::new(0),
-            special_business_count: AtomicU64::new(0),
-            special_business_reply_count: AtomicU64::new(0),
-            solicit_entry_count: AtomicU64::new(0),
-            solicit_entry2_count: AtomicU64::new(0),
-
-            // Initialize error counters
-            v2_error_count: AtomicU64::new(0),
-            reassembly_error_count: AtomicU64::new(0),
-            etf_parsing_validation_error_count: AtomicU64::new(0),
-            proto_handling_error_count: AtomicU64::new(0),
-            other_error_count: AtomicU64::new(0),
-
-            // Initialize total packets counter
-            total_v2udp_packets_count: AtomicU64::new(0),
+            incoming_bytes: AtomicU64::new(0),
+            incoming_packets: AtomicU64::new(0),
+            handled_protos,
+            errors,
+            start_time: get_unix_secs_now(),
         }
     }
-}
 
-#[inline]
-pub fn inc_ping() {
-    METRICS.ping_count.fetch_add(1, Ordering::Relaxed);
-}
+    #[inline]
+    pub fn add_handled_proto_by_name(&self, proto_name: &str) {
+        // correct way of handling ownership in scc HashIndex
+        let pn_owned = proto_name.to_string();
+        if let Some(counter) = METRICS.handled_protos.get(&pn_owned) {
+            counter.fetch_add(1, Ordering::Relaxed);
+        } else {
+            let _ = self.handled_protos.insert(pn_owned, Arc::new(AtomicU64::new(1)));
+        }
+    }
 
-#[inline]
-pub fn inc_pong() {
-    METRICS.pong_count.fetch_add(1, Ordering::Relaxed);
-}
+    /// Increment UDP packet count with size
+    pub fn add_v2_udp_packet(&self, len: usize) {
+        self.incoming_bytes.fetch_add(len as u64, Ordering::Relaxed);
+        self.incoming_packets.fetch_add(1, Ordering::Relaxed);
+    }
 
-#[inline]
-pub fn inc_who_are_you() {
-    METRICS.who_are_you_count.fetch_add(1, Ordering::Relaxed);
-}
+    /// Increment V2 parsing errors
+    pub fn add_error<E: Debug + Typename>(&self, error: &E) {
+        warn!(target = "metrics", "v2 error: {error:?}");
+        self.add_error_by_name(error.typename());
+    }
 
-#[inline]
-pub fn inc_txpool() {
-    METRICS.txpool_count.fetch_add(1, Ordering::Relaxed);
-}
+    fn add_error_by_name(&self, error_type: &str) {
+        // correct way of handling ownership in scc HashIndex
+        let et_owned = error_type.to_string();
+        if let Some(counter) = self.errors.get(&et_owned) {
+            counter.fetch_add(1, Ordering::Relaxed);
+        } else {
+            let _ = METRICS.errors.insert(et_owned, Arc::new(AtomicU64::new(1)));
+        }
+    }
 
-#[inline]
-pub fn inc_peers() {
-    METRICS.peers_count.fetch_add(1, Ordering::Relaxed);
-}
+    /// Get JSON-formatted metrics
+    pub fn get_json(&self) -> Value {
+        let guard = Guard::new();
 
-#[inline]
-pub fn inc_sol() {
-    METRICS.sol_count.fetch_add(1, Ordering::Relaxed);
-}
+        let mut protos = StdHashMap::new();
+        let mut iter = self.handled_protos.iter(&guard);
+        while let Some((proto_name, counter)) = iter.next() {
+            protos.insert(proto_name.clone(), counter.load(Ordering::Relaxed));
+        }
 
-#[inline]
-pub fn inc_entry() {
-    METRICS.entry_count.fetch_add(1, Ordering::Relaxed);
-}
+        let mut errors = StdHashMap::new();
+        let mut iter = self.errors.iter(&guard);
+        while let Some((error_type, counter)) = iter.next() {
+            errors.insert(error_type.clone(), counter.load(Ordering::Relaxed));
+        }
 
-#[inline]
-pub fn inc_attestation_bulk() {
-    METRICS.attestation_bulk_count.fetch_add(1, Ordering::Relaxed);
-}
+        let uptime_seconds = get_unix_secs_now() - self.start_time;
 
-#[inline]
-pub fn inc_consensus_bulk() {
-    METRICS.consensus_bulk_count.fetch_add(1, Ordering::Relaxed);
-}
+        serde_json::json!({
+            "handled_protos": protos,
+            "errors": errors,
+            "packets": self.get_packets_json(uptime_seconds),
+            "uptime": uptime_seconds
+        })
+    }
 
-#[inline]
-pub fn inc_catchup_entry() {
-    METRICS.catchup_entry_count.fetch_add(1, Ordering::Relaxed);
-}
+    fn get_packets_json(&self, uptime_seconds: u64) -> serde_json::Value {
+        static LAST_INCOMING_BYTES: AtomicU64 = AtomicU64::new(0);
+        static LAST_INCOMING_PACKETS: AtomicU64 = AtomicU64::new(0);
+        static LAST_UPTIME_SECONDS: AtomicU64 = AtomicU64::new(0);
 
-#[inline]
-pub fn inc_catchup_tri() {
-    METRICS.catchup_tri_count.fetch_add(1, Ordering::Relaxed);
-}
+        let incoming_packets = self.incoming_packets.load(Ordering::Relaxed);
+        let incoming_bytes = self.incoming_bytes.load(Ordering::Relaxed);
 
-#[inline]
-pub fn inc_catchup_bi() {
-    METRICS.catchup_bi_count.fetch_add(1, Ordering::Relaxed);
-}
+        let lus = LAST_UPTIME_SECONDS.swap(uptime_seconds, Ordering::Relaxed);
+        let lip = LAST_INCOMING_PACKETS.swap(incoming_packets, Ordering::Relaxed);
+        let lib = LAST_INCOMING_BYTES.swap(incoming_bytes, Ordering::Relaxed);
 
-#[inline]
-pub fn inc_catchup_attestation() {
-    METRICS.catchup_attestation_count.fetch_add(1, Ordering::Relaxed);
-}
+        if lus == 0 {
+            return serde_json::json!({
+                "total_incoming_packets": incoming_packets,
+                "total_incoming_bytes": incoming_bytes
+            });
+        }
 
-#[inline]
-pub fn inc_special_business() {
-    METRICS.special_business_count.fetch_add(1, Ordering::Relaxed);
-}
+        let seconds = uptime_seconds - lus;
+        let packets = incoming_packets - lip;
+        let bytes = incoming_bytes - lib;
 
-#[inline]
-pub fn inc_special_business_reply() {
-    METRICS.special_business_reply_count.fetch_add(1, Ordering::Relaxed);
-}
+        serde_json::json!({
+            "total_incoming_packets": incoming_packets,
+            "total_incoming_bytes": incoming_bytes,
+            "packets_per_second": packets / seconds,
+            "bytes_per_second": bytes / seconds,
+        })
+    }
 
-#[inline]
-pub fn inc_solicit_entry() {
-    METRICS.solicit_entry_count.fetch_add(1, Ordering::Relaxed);
-}
-
-#[inline]
-pub fn inc_solicit_entry2() {
-    METRICS.solicit_entry2_count.fetch_add(1, Ordering::Relaxed);
-}
-
-#[inline]
-pub fn inc_v2udp_packets() {
-    METRICS.total_v2udp_packets_count.fetch_add(1, Ordering::Relaxed);
-}
-
-#[inline]
-pub fn inc_v2_parsing_errors(e: &crate::node::msg_v2::Error) {
-    warn!(target = "metrics", "v2 error: {e:?}");
-    METRICS.v2_error_count.fetch_add(1, Ordering::Relaxed);
-}
-
-#[inline]
-pub fn inc_reassembly_errors(e: &crate::node::reassembler::Error) {
-    warn!(target = "metrics", "reassembler error: {e:?}");
-    METRICS.reassembly_error_count.fetch_add(1, Ordering::Relaxed);
-}
-
-#[inline]
-pub fn inc_parsing_and_validation_errors(e: &crate::node::protocol::Error) {
-    warn!(target = "metrics", "parsing-validation error: {e:?}");
-    METRICS.etf_parsing_validation_error_count.fetch_add(1, Ordering::Relaxed);
-}
-
-#[inline]
-pub fn inc_handling_errors(e: &crate::node::protocol::Error) {
-    warn!(target = "metrics", "handling error: {e:?}");
-    METRICS.proto_handling_error_count.fetch_add(1, Ordering::Relaxed);
-}
-
-/// Prometheus-formatted metrics string
-pub fn get_metrics() -> String {
-    let metrics = &*METRICS;
-
-    let protocol_metrics = format!(
-        r#"# HELP amadeus_protocol_messages_total Total number of protocol messages handled by type
-# TYPE amadeus_protocol_messages_total counter
-amadeus_protocol_messages_total{{type="ping"}} {}
-amadeus_protocol_messages_total{{type="pong"}} {}
-amadeus_protocol_messages_total{{type="who_are_you"}} {}
-amadeus_protocol_messages_total{{type="txpool"}} {}
-amadeus_protocol_messages_total{{type="peers"}} {}
-amadeus_protocol_messages_total{{type="sol"}} {}
-amadeus_protocol_messages_total{{type="entry"}} {}
-amadeus_protocol_messages_total{{type="attestation_bulk"}} {}
-amadeus_protocol_messages_total{{type="consensus_bulk"}} {}
-amadeus_protocol_messages_total{{type="catchup_entry"}} {}
-amadeus_protocol_messages_total{{type="catchup_tri"}} {}
-amadeus_protocol_messages_total{{type="catchup_bi"}} {}
-amadeus_protocol_messages_total{{type="catchup_attestation"}} {}
-amadeus_protocol_messages_total{{type="special_business"}} {}
-amadeus_protocol_messages_total{{type="special_business_reply"}} {}
-amadeus_protocol_messages_total{{type="solicit_entry"}} {}
-amadeus_protocol_messages_total{{type="solicit_entry2"}} {}
-
+    /// Prometheus-formatted metrics string
+    pub fn get_prometheus(&self) -> String {
+        let packets = format!(
+            r#"
 # HELP amadeus_packets_total Total number of UDP packets received
 # TYPE amadeus_packets_total counter
 amadeus_udp_packets_total {}
-"#,
-        metrics.ping_count.load(Ordering::Relaxed),
-        metrics.pong_count.load(Ordering::Relaxed),
-        metrics.who_are_you_count.load(Ordering::Relaxed),
-        metrics.txpool_count.load(Ordering::Relaxed),
-        metrics.peers_count.load(Ordering::Relaxed),
-        metrics.sol_count.load(Ordering::Relaxed),
-        metrics.entry_count.load(Ordering::Relaxed),
-        metrics.attestation_bulk_count.load(Ordering::Relaxed),
-        metrics.consensus_bulk_count.load(Ordering::Relaxed),
-        metrics.catchup_entry_count.load(Ordering::Relaxed),
-        metrics.catchup_tri_count.load(Ordering::Relaxed),
-        metrics.catchup_bi_count.load(Ordering::Relaxed),
-        metrics.catchup_attestation_count.load(Ordering::Relaxed),
-        metrics.special_business_count.load(Ordering::Relaxed),
-        metrics.special_business_reply_count.load(Ordering::Relaxed),
-        metrics.solicit_entry_count.load(Ordering::Relaxed),
-        metrics.solicit_entry2_count.load(Ordering::Relaxed),
-        metrics.total_v2udp_packets_count.load(Ordering::Relaxed),
-    );
+amadeus_bytes_total {}
 
-    // Add error metrics
-    let error_metrics = format!(
-        r#"
-# HELP amadeus_packet_errors_total Total number of packet processing errors by type
-# TYPE amadeus_packet_errors_total counter
-amadeus_packet_errors_total{{type="v2_parsing"}} {}
-amadeus_packet_errors_total{{type="reassembly"}} {}
-amadeus_packet_errors_total{{type="etf_decode_and_validation"}} {}
-amadeus_packet_errors_total{{type="handling"}} {}
-"#,
-        metrics.v2_error_count.load(Ordering::Relaxed),
-        metrics.reassembly_error_count.load(Ordering::Relaxed),
-        metrics.etf_parsing_validation_error_count.load(Ordering::Relaxed),
-        metrics.proto_handling_error_count.load(Ordering::Relaxed),
-    );
+# HELP amadeus_uptime_seconds Process uptime in seconds
+# TYPE amadeus_uptime_seconds gauge
+amadeus_uptime_seconds {}"#,
+            self.incoming_packets.load(Ordering::Relaxed),
+            self.incoming_bytes.load(Ordering::Relaxed),
+            get_unix_secs_now() - self.start_time
+        );
 
-    format!("{}{}", protocol_metrics, error_metrics)
-}
+        let mut protos = Vec::new();
+        protos.push("\n\n# HELP amadeus_protocol_messages_total Total number of proto messages handled by type".into());
+        protos.push("# TYPE amadeus_protocol_messages_total counter".into());
+        let guard = Guard::new();
+        let mut iter = self.handled_protos.iter(&guard);
+        while let Some((proto_name, counter)) = iter.next() {
+            let count = counter.load(Ordering::Relaxed);
+            protos.push(format!("amadeus_protocol_messages_total{{type=\"{}\"}} {}", proto_name, count));
+        }
 
-/// Increment counter for a specific protocol message type
-pub fn inc_handled_counter_by_name(proto_name: &str) {
-    match proto_name {
-        "ping" => inc_ping(),
-        "pong" => inc_pong(),
-        "who_are_you" => inc_who_are_you(),
-        "txpool" => inc_txpool(),
-        "peers" => inc_peers(),
-        "sol" => inc_sol(),
-        "entry" => inc_entry(),
-        "attestation_bulk" => inc_attestation_bulk(),
-        "consensus_bulk" => inc_consensus_bulk(),
-        "catchup_entry" => inc_catchup_entry(),
-        "catchup_tri" => inc_catchup_tri(),
-        "catchup_bi" => inc_catchup_bi(),
-        "catchup_attestation" => inc_catchup_attestation(),
-        "special_business" => inc_special_business(),
-        "special_business_reply" => inc_special_business_reply(),
-        "solicit_entry" => inc_solicit_entry(),
-        "solicit_entry2" => inc_solicit_entry2(),
-        _ => {} // Unknown message type, ignore
+        let mut errors = Vec::new();
+        errors.push("\n\n# HELP amadeus_packet_errors_total Total number of packet processing errors by type".into());
+        errors.push("# TYPE amadeus_packet_errors_total counter".into());
+        let mut iter = self.errors.iter(&guard);
+        while let Some((error_type, counter)) = iter.next() {
+            let count = counter.load(Ordering::Relaxed);
+            errors.push(format!("amadeus_packet_errors_total{{type=\"{}\"}} {}", error_type, count));
+        }
+
+        format!("{}{}{}", packets, protos.join("\n"), errors.join("\n"))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_increment_functions() {
-        inc_ping();
-        inc_pong();
-        inc_entry();
-
-        let metrics_str = get_metrics();
-        assert!(metrics_str.contains("amadeus_protocol_messages_total{type=\"ping\"}"));
-        assert!(metrics_str.contains("amadeus_protocol_messages_total{type=\"pong\"}"));
-        assert!(metrics_str.contains("amadeus_protocol_messages_total{type=\"entry\"}"));
-    }
-
     #[test]
     fn test_prometheus_format() {
-        let metrics_str = get_metrics();
+        let metrics_str = METRICS.get_prometheus();
         assert!(metrics_str.contains("# HELP amadeus_protocol_messages_total"));
         assert!(metrics_str.contains("# TYPE amadeus_protocol_messages_total counter"));
-    }
-
-    #[test]
-    fn test_inc_proto_message() {
-        inc_handled_counter_by_name("ping");
-        inc_handled_counter_by_name("entry");
-        inc_handled_counter_by_name("unknown_type"); // Should be ignored
-
-        let metrics_str = get_metrics();
-        assert!(metrics_str.contains("amadeus_protocol_messages_total{type=\"ping\"}"));
-        assert!(metrics_str.contains("amadeus_protocol_messages_total{type=\"entry\"}"));
-    }
-
-    #[test]
-    fn test_error_counters() {
-        let v2_error = crate::node::msg_v2::Error::BadPkLen(10);
-        let reassembly_error = crate::node::reassembler::Error::NoSignature;
-        inc_v2_parsing_errors(&v2_error);
-        inc_reassembly_errors(&reassembly_error);
-        inc_v2udp_packets();
-
-        let metrics_str = get_metrics();
-        assert!(metrics_str.contains("amadeus_packet_errors_total{type=\"v2_parsing\"}"));
-        assert!(metrics_str.contains("amadeus_packet_errors_total{type=\"reassembly\"}"));
-        assert!(metrics_str.contains("amadeus_udp_packets_total"));
     }
 }

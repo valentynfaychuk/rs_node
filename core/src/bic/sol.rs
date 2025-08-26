@@ -1,7 +1,7 @@
-use crate::misc::blake3;
-use crate::misc::utils::TermMap;
+use crate::utils::blake3;
+use crate::utils::misc::TermMap;
 use crate::node::protocol;
-use crate::node::protocol::Proto;
+use crate::node::protocol::Protocol;
 use eetf::{Atom, Term};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -60,11 +60,14 @@ pub enum Solution {
     V0(SolV0), // epoch < 1
 }
 
-#[async_trait::async_trait]
-impl Proto for Solution {
-    fn get_name(&self) -> &'static str {
+impl crate::utils::misc::Typename for Solution {
+    fn typename(&self) -> &'static str {
         Self::NAME
     }
+}
+
+#[async_trait::async_trait]
+impl Protocol for Solution {
 
     fn from_etf_map_validated(map: TermMap) -> Result<Self, protocol::Error> {
         let bin = map.get_binary("sol").ok_or(Error::Missing("sol"))?;

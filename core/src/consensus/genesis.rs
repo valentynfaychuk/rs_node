@@ -14,7 +14,7 @@ pub enum Error {
     #[error("unimplemented: {0}")]
     Unimplemented(&'static str),
     #[error(transparent)]
-    Bls(#[from] crate::misc::bls12_381::Error),
+    Bls(#[from] crate::utils::bls12_381::Error),
 }
 
 #[derive(Debug, Clone)]

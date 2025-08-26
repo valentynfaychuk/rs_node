@@ -1,6 +1,5 @@
 use crate::consensus::DST_NODE;
-use crate::misc;
-use misc::utils::get_unix_nanos_now;
+use crate::utils::misc::get_unix_nanos_now;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -8,9 +7,9 @@ use tokio::sync::Mutex;
 // does not poison mutex on panic
 
 use super::msg_v2::MessageV2;
-use crate::misc::reed_solomon;
-use crate::misc::reed_solomon::ReedSolomonResource;
-use crate::misc::{blake3, bls12_381};
+use crate::utils::reed_solomon;
+use crate::utils::reed_solomon::ReedSolomonResource;
+use crate::utils::{blake3, bls12_381};
 
 type ReassemblySyncMap = Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>;
 
@@ -18,7 +17,7 @@ pub struct ReedSolomonReassembler {
     reorg: ReassemblySyncMap,
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, strum_macros::IntoStaticStr)]
 pub enum Error {
     #[error(transparent)]
     ReedSolomon(#[from] reed_solomon::Error),
@@ -26,6 +25,12 @@ pub enum Error {
     Bls(#[from] bls12_381::Error),
     #[error("message has no signature")]
     NoSignature,
+}
+
+impl crate::utils::misc::Typename for Error {
+    fn typename(&self) -> &'static str {
+        self.into()
+    }
 }
 
 #[derive(Clone, Debug, Eq)]
@@ -159,7 +164,7 @@ impl ReedSolomonReassembler {
     }
 
     pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
-        self.add_shard_inner(message).await.inspect_err(|e| crate::metrics::inc_reassembly_errors(e))
+        self.add_shard_inner(message).await.inspect_err(|e| crate::metrics::METRICS.add_error(e))
     }
 
     // adds a shard to the reassembly buffer

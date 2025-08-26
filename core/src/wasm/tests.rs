@@ -1,6 +1,6 @@
 use crate::bic::epoch::CallEnv;
 use crate::consensus::kv;
-use crate::misc::rocksdb;
+use crate::utils::rocksdb;
 use crate::wasm::runtime;
 use std::sync::Once;
 

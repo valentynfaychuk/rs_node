@@ -1,4 +1,4 @@
-use crate::misc::bls12_381;
+use crate::utils::bls12_381;
 use rand::RngCore;
 use std::path::PathBuf;
 use tokio::fs;

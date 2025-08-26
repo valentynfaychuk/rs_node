@@ -1,8 +1,13 @@
-use crate::misc::bls12_381::{sign, verify};
-use crate::misc::rocksdb as rdb;
+use crate::utils::bls12_381::{sign, verify};
+use once_cell::sync::Lazy;
+use scc::HashMap;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// global in-memory storage for anrs
+static ANR_STORE: Lazy<Arc<HashMap<Vec<u8>, ANR>>> = Lazy::new(|| Arc::new(HashMap::new()));
 
 // ama node record
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
@@ -147,218 +152,105 @@ struct SigningData {
     version: String,
 }
 
-// storage functions using rocksdb
-
-// serialize anr for storage
-fn serialize_anr(anr: &ANR) -> Result<Vec<u8>, String> {
-    bincode::encode_to_vec(anr, bincode::config::standard()).map_err(|e| e.to_string())
-}
-
-// deserialize anr from storage
-fn deserialize_anr(bytes: &[u8]) -> Result<ANR, String> {
-    let (anr, _) = bincode::decode_from_slice(bytes, bincode::config::standard()).map_err(|e| e.to_string())?;
-    Ok(anr)
-}
+// storage functions using scc hashmap
 
 // insert or update anr
-pub fn insert(anr: ANR) -> Result<(), rdb::Error> {
+pub fn insert(anr: ANR) -> Result<(), String> {
     // check if we have chain pop for this pk (would need consensus module)
     // let has_chain_pop = consensus::chain_pop(&anr.pk).is_some();
     let mut anr = anr;
     anr.has_chain_pop = false; // placeholder
 
-    // check if anr already exists
-    let old_anr = get(&anr.pk)?;
-
-    if let Some(old) = old_anr {
+    let pk = anr.pk.clone();
+    
+    // check if anr already exists and update accordingly
+    ANR_STORE.entry(pk.clone()).and_modify(|old| {
         // only update if newer timestamp
-        if anr.ts <= old.ts {
-            return Ok(());
+        if anr.ts > old.ts {
+            // check if ip4/port changed
+            let same_ip4_port = old.ip4 == anr.ip4 && old.port == anr.port;
+            if !same_ip4_port {
+                // reset handshake status
+                anr.handshaked = false;
+                anr.error = None;
+                anr.error_tries = 0;
+                anr.next_check = anr.ts + 3;
+            } else {
+                // preserve handshake status
+                anr.handshaked = old.handshaked;
+            }
+            *old = anr.clone();
         }
-
-        // check if ip4/port changed
-        let same_ip4_port = old.ip4 == anr.ip4 && old.port == anr.port;
-        if !same_ip4_port {
-            // reset handshake status
-            anr.handshaked = false;
-            anr.error = None;
-            anr.error_tries = 0;
-            anr.next_check = anr.ts + 3;
-        } else {
-            // preserve handshake status
-            anr.handshaked = old.handshaked;
-        }
-    } else {
+    }).or_insert_with(|| {
         // new anr
         anr.handshaked = false;
         anr.error = None;
         anr.error_tries = 0;
         anr.next_check = anr.ts + 3;
-    }
-
-    // store in db with prefixed key
-    let serialized =
-        serialize_anr(&anr).map_err(|e| rdb::Error::TokioIo(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-    let mut key = b"anr:".to_vec();
-    key.extend_from_slice(&anr.pk);
-    rdb::put("default", &key, &serialized)?;
-
-    // update indexes
-    update_indexes(&anr)?;
+        anr
+    });
 
     Ok(())
 }
 
 // get anr by public key
-pub fn get(pk: &[u8]) -> Result<Option<ANR>, rdb::Error> {
-    let mut key = b"anr:".to_vec();
-    key.extend_from_slice(pk);
-
-    match rdb::get("default", &key)? {
-        Some(bytes) => {
-            let anr = deserialize_anr(&bytes)
-                .map_err(|e| rdb::Error::TokioIo(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-            Ok(Some(anr))
-        }
-        None => Ok(None),
-    }
+pub fn get(pk: &[u8]) -> Result<Option<ANR>, String> {
+    Ok(ANR_STORE.read(pk, |_, v| v.clone()))
 }
 
 // get all anrs
-pub fn get_all() -> Result<Vec<ANR>, rdb::Error> {
+pub fn get_all() -> Result<Vec<ANR>, String> {
     let mut anrs = Vec::new();
-    let items = rdb::iter_prefix("default", b"anr:")?;
-
-    for (_key, value) in items {
-        if let Ok(anr) = deserialize_anr(&value) {
-            anrs.push(anr);
-        }
-    }
-
+    ANR_STORE.scan(|_k, v| {
+        anrs.push(v.clone());
+    });
     Ok(anrs)
 }
 
 // set handshaked status
-pub fn set_handshaked(pk: &[u8]) -> Result<(), rdb::Error> {
-    if let Some(mut anr) = get(pk)? {
+pub fn set_handshaked(pk: &[u8]) -> Result<(), String> {
+    let _ = ANR_STORE.entry(pk.to_vec()).and_modify(|anr| {
         anr.handshaked = true;
-
-        let serialized =
-            serialize_anr(&anr).map_err(|e| rdb::Error::TokioIo(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-        let mut key = b"anr:".to_vec();
-        key.extend_from_slice(pk);
-        rdb::put("default", &key, &serialized)?;
-
-        update_indexes(&anr)?;
-    }
-    Ok(())
-}
-
-// update secondary indexes for efficient queries
-fn update_indexes(anr: &ANR) -> Result<(), rdb::Error> {
-    // clean up old indexes first (if any)
-    cleanup_indexes_for_pk(&anr.pk)?;
-
-    // create index key for handshaked status and ip4
-    // format: "idx:anr:handshaked:<0|1>:ip4:<a.b.c.d>:pk:<base58>"
-    let handshaked_byte = if anr.handshaked { b'1' } else { b'0' };
-    let ip4_str = anr.ip4.to_string();
-    let pk_b58 = bs58::encode(&anr.pk).into_string();
-
-    let index_key = format!("idx:anr:handshaked:{}:ip4:{}:pk:{}", handshaked_byte as char, ip4_str, pk_b58);
-
-    // store pk as value for reverse lookup
-    rdb::put("default", index_key.as_bytes(), &anr.pk)?;
-
-    // also store a simpler index for handshaked-only queries
-    let simple_index = format!("idx:anr:handshaked:{}:pk:{}", handshaked_byte as char, pk_b58);
-    rdb::put("default", simple_index.as_bytes(), &anr.pk)?;
-
-    Ok(())
-}
-
-// cleanup old indexes for a given pk
-fn cleanup_indexes_for_pk(pk: &[u8]) -> Result<(), rdb::Error> {
-    let pk_b58 = bs58::encode(pk).into_string();
-
-    // delete all indexes containing this pk
-    let prefixes = vec![format!("idx:anr:handshaked:0:pk:{}", pk_b58), format!("idx:anr:handshaked:1:pk:{}", pk_b58)];
-
-    for prefix in prefixes {
-        let items = rdb::iter_prefix("default", prefix.as_bytes())?;
-        for (key, _) in items {
-            rdb::delete("default", &key)?;
-        }
-    }
-
-    // also cleanup ip4 indexes
-    let ip4_prefixes = vec![b"idx:anr:handshaked:0:ip4:", b"idx:anr:handshaked:1:ip4:"];
-
-    for prefix in ip4_prefixes {
-        let items = rdb::iter_prefix("default", prefix)?;
-        for (key, value) in items {
-            if value == pk {
-                rdb::delete("default", &key)?;
-            }
-        }
-    }
-
+    });
     Ok(())
 }
 
 // query functions
 
 // get all handshaked node public keys
-pub fn handshaked() -> Result<Vec<Vec<u8>>, rdb::Error> {
-    let prefix = b"idx:anr:handshaked:1:";
-    let items = rdb::iter_prefix("default", prefix)?;
-
+pub fn handshaked() -> Result<Vec<Vec<u8>>, String> {
     let mut pks = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for (_key, value) in items {
-        if seen.insert(value.clone()) {
-            pks.push(value);
+    ANR_STORE.scan(|k, v| {
+        if v.handshaked {
+            pks.push(k.clone());
         }
-    }
-
+    });
     Ok(pks)
 }
 
 // get all not handshaked (pk, ip4) pairs
-pub fn not_handshaked_pk_ip4() -> Result<Vec<(Vec<u8>, Ipv4Addr)>, rdb::Error> {
-    let prefix = b"idx:anr:handshaked:0:ip4:";
-    let items = rdb::iter_prefix("default", prefix)?;
-
+pub fn not_handshaked_pk_ip4() -> Result<Vec<(Vec<u8>, Ipv4Addr)>, String> {
     let mut results = Vec::new();
-    for (key, pk) in items {
-        // parse ip4 from key
-        if let Ok(key_str) = std::str::from_utf8(&key) {
-            if let Some(ip4_part) = key_str.split(":ip4:").nth(1) {
-                if let Some(ip4_str) = ip4_part.split(":pk:").next() {
-                    if let Ok(ip4) = ip4_str.parse::<Ipv4Addr>() {
-                        results.push((pk, ip4));
-                    }
-                }
-            }
+    ANR_STORE.scan(|k, v| {
+        if !v.handshaked {
+            results.push((k.clone(), v.ip4));
         }
-    }
-
+    });
     Ok(results)
 }
 
 // check if node is handshaked
-pub fn is_handshaked(pk: &[u8]) -> Result<bool, rdb::Error> {
-    if let Some(anr) = get(pk)? { Ok(anr.handshaked) } else { Ok(false) }
+pub fn is_handshaked(pk: &[u8]) -> Result<bool, String> {
+    Ok(ANR_STORE.read(pk, |_, v| v.handshaked).unwrap_or(false))
 }
 
 // check if node is handshaked with valid ip4
-pub fn handshaked_and_valid_ip4(pk: &[u8], ip4: &Ipv4Addr) -> Result<bool, rdb::Error> {
-    if let Some(anr) = get(pk)? { Ok(anr.handshaked && anr.ip4 == *ip4) } else { Ok(false) }
+pub fn handshaked_and_valid_ip4(pk: &[u8], ip4: &Ipv4Addr) -> Result<bool, String> {
+    Ok(ANR_STORE.read(pk, |_, v| v.handshaked && v.ip4 == *ip4).unwrap_or(false))
 }
 
 // get random verified nodes
-pub fn get_random_verified(count: usize) -> Result<Vec<ANR>, rdb::Error> {
+pub fn get_random_verified(count: usize) -> Result<Vec<ANR>, String> {
     use rand::seq::SliceRandom;
 
     let pks = handshaked()?;
@@ -376,7 +268,7 @@ pub fn get_random_verified(count: usize) -> Result<Vec<ANR>, rdb::Error> {
 }
 
 // get random unverified nodes
-pub fn get_random_unverified(count: usize) -> Result<Vec<(Vec<u8>, Ipv4Addr)>, rdb::Error> {
+pub fn get_random_unverified(count: usize) -> Result<Vec<(Vec<u8>, Ipv4Addr)>, String> {
     use rand::seq::SliceRandom;
     use std::collections::HashSet;
 
@@ -398,7 +290,7 @@ pub fn get_random_unverified(count: usize) -> Result<Vec<(Vec<u8>, Ipv4Addr)>, r
 }
 
 // get all validators from handshaked nodes
-pub fn all_validators() -> Result<Vec<ANR>, rdb::Error> {
+pub fn all_validators() -> Result<Vec<ANR>, String> {
     // this would need integration with consensus module to get validator set
     // for now, return all handshaked nodes
     let pks = handshaked()?;
@@ -420,7 +312,7 @@ pub fn seed(
     my_pk: Vec<u8>,
     my_pop: Vec<u8>,
     version: String,
-) -> Result<(), rdb::Error> {
+) -> Result<(), String> {
     // insert seed anrs
     for anr in seed_anrs {
         insert(anr)?;
@@ -437,29 +329,50 @@ pub fn seed(
     Ok(())
 }
 
+// clear all anrs (useful for testing)
+pub fn clear_all() -> Result<(), String> {
+    ANR_STORE.clear();
+    Ok(())
+}
+
+// get count of anrs
+pub fn count() -> usize {
+    ANR_STORE.len()
+}
+
+// get count of handshaked anrs
+pub fn count_handshaked() -> usize {
+    let mut count = 0;
+    ANR_STORE.scan(|_, v| {
+        if v.handshaked {
+            count += 1;
+        }
+    });
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn test_anr_operations() {
-        // initialize db for testing with unique path
-        let test_path = format!("target/test_anr_{}", std::process::id());
-        let _ = rdb::init(&test_path).await;
-
         // create test keys with unique pk to avoid conflicts
         let _sk = vec![1; 32];
         let mut pk = vec![2; 48];
-        // make pk unique per test run
+        // make pk unique per test run to avoid collision with parallel tests
         let pid_bytes = std::process::id().to_le_bytes();
+        let time_bytes = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            .to_le_bytes();
         pk[..4].copy_from_slice(&pid_bytes);
+        pk[4..12].copy_from_slice(&time_bytes[..8]);
 
         let pop = vec![3; 96];
         let ip4 = Ipv4Addr::new(127, 0, 0, 1);
         let version = "1.0.0".to_string();
-
-        // ensure no existing data for this pk
-        let _ = cleanup_test_anr(&pk);
 
         // manually create ANR without signature verification for testing
         let anr = ANR {
@@ -488,34 +401,135 @@ mod tests {
         // test set_handshaked
         set_handshaked(&pk).unwrap();
         let retrieved = get(&pk).unwrap().unwrap();
-        assert!(retrieved.handshaked);
+        assert!(retrieved.handshaked, "Expected handshaked to be true after set_handshaked");
 
         // test handshaked query
         let handshaked_pks = handshaked().unwrap();
-        assert!(handshaked_pks.iter().any(|p| p == &pk));
+        assert!(handshaked_pks.iter().any(|p| p == &pk), "pk should be in handshaked list");
 
         // test is_handshaked
-        assert!(is_handshaked(&pk).unwrap());
+        assert!(is_handshaked(&pk).unwrap(), "is_handshaked should return true");
 
         // test get_all
         let all = get_all().unwrap();
         assert!(!all.is_empty());
         assert!(all.iter().any(|a| a.pk == pk));
 
-        // cleanup
-        let _ = cleanup_test_anr(&pk);
+        // test count functions - since tests run in parallel, we can't assume exact counts
+        let total_count = count();
+        assert!(total_count >= 1, "Expected at least 1 ANR, got {}", total_count);
+        
+        // cleanup - remove only our test anr
+        let _ = ANR_STORE.remove(&pk);
+        
+        // verify our pk was removed
+        assert!(get(&pk).unwrap().is_none(), "Our pk should be removed");
     }
 
-    // helper function to clean up test data
-    fn cleanup_test_anr(pk: &[u8]) -> Result<(), rdb::Error> {
-        // delete main record
-        let mut key = b"anr:".to_vec();
-        key.extend_from_slice(pk);
-        let _ = rdb::delete("default", &key);
+    #[tokio::test]
+    async fn test_anr_update() {
+        // create unique pk for this test
+        let mut pk = vec![1; 48];
+        let pid_bytes = std::process::id().to_le_bytes();
+        let time_bytes = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            .to_le_bytes();
+        pk[..4].copy_from_slice(&pid_bytes);
+        pk[4..12].copy_from_slice(&time_bytes[..8]);
+        let pop = vec![2; 96];
+        let ip4 = Ipv4Addr::new(192, 168, 1, 1);
+        let version = "1.0.0".to_string();
 
-        // cleanup indexes
-        let _ = cleanup_indexes_for_pk(pk);
+        // insert initial anr
+        let anr1 = ANR {
+            ip4,
+            pk: pk.clone(),
+            pop: pop.clone(),
+            port: 36969,
+            signature: vec![0; 96],
+            ts: 1000,
+            version: version.clone(),
+            handshaked: true,
+            has_chain_pop: false,
+            error: None,
+            error_tries: 0,
+            next_check: 1003,
+        };
+        insert(anr1).unwrap();
+        set_handshaked(&pk).unwrap();
 
-        Ok(())
+        // try to insert older anr (should not update)
+        let anr2 = ANR {
+            ip4: Ipv4Addr::new(10, 0, 0, 1),
+            pk: pk.clone(),
+            pop: pop.clone(),
+            port: 36969,
+            signature: vec![0; 96],
+            ts: 999,
+            version: version.clone(),
+            handshaked: false,
+            has_chain_pop: false,
+            error: None,
+            error_tries: 0,
+            next_check: 1002,
+        };
+        insert(anr2).unwrap();
+
+        // verify old anr was not updated
+        let retrieved = get(&pk).unwrap().unwrap();
+        assert_eq!(retrieved.ip4, Ipv4Addr::new(192, 168, 1, 1));
+        assert_eq!(retrieved.ts, 1000);
+        assert!(retrieved.handshaked);
+
+        // insert newer anr with same ip (should preserve handshake)
+        let anr3 = ANR {
+            ip4,
+            pk: pk.clone(),
+            pop: pop.clone(),
+            port: 36969,
+            signature: vec![0; 96],
+            ts: 2000,
+            version: "2.0.0".to_string(),
+            handshaked: false,
+            has_chain_pop: false,
+            error: None,
+            error_tries: 0,
+            next_check: 2003,
+        };
+        insert(anr3).unwrap();
+
+        let retrieved = get(&pk).unwrap().unwrap();
+        assert_eq!(retrieved.ts, 2000);
+        assert_eq!(retrieved.version, "2.0.0");
+        assert!(retrieved.handshaked); // should be preserved
+
+        // insert newer anr with different ip (should reset handshake)
+        let anr4 = ANR {
+            ip4: Ipv4Addr::new(10, 0, 0, 1),
+            pk: pk.clone(),
+            pop,
+            port: 36969,
+            signature: vec![0; 96],
+            ts: 3000,
+            version: "3.0.0".to_string(),
+            handshaked: true,
+            has_chain_pop: false,
+            error: Some("old error".to_string()),
+            error_tries: 5,
+            next_check: 3003,
+        };
+        insert(anr4).unwrap();
+
+        let retrieved = get(&pk).unwrap().unwrap();
+        assert_eq!(retrieved.ts, 3000);
+        assert_eq!(retrieved.ip4, Ipv4Addr::new(10, 0, 0, 1));
+        assert!(!retrieved.handshaked); // should be reset
+        assert_eq!(retrieved.error, None); // should be reset
+        assert_eq!(retrieved.error_tries, 0); // should be reset
+
+        // cleanup - remove only our test anr
+        let _ = ANR_STORE.remove(&pk);
     }
 }

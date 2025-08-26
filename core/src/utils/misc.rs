@@ -5,6 +5,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Trait for types that can provide their type name as a static string
+pub trait Typename {
+    /// Get the type name for this instance
+    /// For enums, this can return different names based on the variant
+    fn typename(&self) -> &'static str;
+}
+
 pub fn get_unix_secs_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).as_ref().map(Duration::as_secs).unwrap_or(0)
 }

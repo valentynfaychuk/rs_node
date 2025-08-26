@@ -2,8 +2,8 @@ use crate::consensus;
 use crate::consensus::attestation::Attestation;
 use crate::consensus::entry::Entry;
 use crate::consensus::genesis;
-use crate::misc::rocksdb;
-use crate::misc::utils::{TermExt, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
+use crate::utils::rocksdb;
+use crate::utils::misc::{TermExt, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
 use eetf::{Atom, Binary, Term};
 use std::collections::HashMap;
 // TODO: make the database trait that the fabric will use

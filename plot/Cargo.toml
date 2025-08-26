@@ -17,3 +17,4 @@ tokio-stream = "0.1"
 async-stream = "0.3"
 futures-core = "0.3"
 anyhow = "1.0.98"
+ama_core = { path = "../core" }

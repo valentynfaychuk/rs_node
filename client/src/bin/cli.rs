@@ -1,14 +1,12 @@
 use ama_core::bic::contract;
-use ama_core::config::{Config, read_b58_sk};
+use ama_core::config::Config;
 use ama_core::consensus::tx;
-use ama_core::misc::bls12_381;
 use bs58;
 use clap::{Parser, Subcommand};
 use client::get_ama_config;
 use rand::RngCore;
 use serde_json::Value as JsonValue;
 use std::fs;
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(author, version, about = "Amadeus blockchain CLI tool")]

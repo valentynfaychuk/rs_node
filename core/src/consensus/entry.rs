@@ -3,11 +3,11 @@ use super::agg_sig::{DST_ENTRY, DST_VRF};
 use crate::config::ENTRY_SIZE;
 use crate::consensus::tx::TxU;
 use crate::consensus::{fabric, tx};
-use crate::misc::bls12_381;
-use crate::misc::utils::{TermExt, TermMap, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
-use crate::misc::{archiver, blake3};
+use crate::utils::bls12_381;
+use crate::utils::misc::{TermExt, TermMap, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
+use crate::utils::{archiver, blake3};
 use crate::node::protocol;
-use crate::node::protocol::Proto;
+use crate::node::protocol::Protocol;
 use crate::{bic, consensus};
 use eetf::{Atom, BigInteger, Binary, Map, Term};
 use std::collections::HashMap;
@@ -179,11 +179,14 @@ impl TryInto<Vec<u8>> for Entry {
     }
 }
 
-#[async_trait::async_trait]
-impl Proto for Entry {
-    fn get_name(&self) -> &'static str {
+impl crate::utils::misc::Typename for Entry {
+    fn typename(&self) -> &'static str {
         Self::NAME
     }
+}
+
+#[async_trait::async_trait]
+impl Protocol for Entry {
 
     fn from_etf_map_validated(map: TermMap) -> Result<Self, protocol::Error> {
         let bin = map.get_binary("entry_packed").ok_or(Error::BadEtf("entry_packed"))?;

@@ -2,7 +2,7 @@ use bincode::error::{DecodeError, EncodeError};
 use bincode::{config::standard, decode_from_slice, encode_to_vec};
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::{BufReader, Write};
+use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::{Mutex, OnceLock};
 use tokio::net::UdpSocket;
@@ -16,33 +16,35 @@ pub trait DumpReplaySocket: Send + Sync {
 #[async_trait::async_trait]
 impl DumpReplaySocket for UdpSocket {
     async fn dump_replay_recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        let recv_res = if let Some(reader_mutex) = udp_replay().as_ref() {
-            // use the replay file instead of the real socket
-            recv_from_replay(reader_mutex, buf).await
-        } else {
-            // fallback to real UDP socket when no replay file
-            self.recv_from(buf).await
+        // use the replay file instead of the real socket if set
+        // fallback to real UDP socket when no replay file
+        let (len, src) = match udp_replay().as_ref() {
+            Some(state_mutex) => recv_from_replay(state_mutex, buf).await?,
+            None => self.recv_from(buf).await?,
         };
 
-        let (len, src) = recv_res?;
-
-        // optionally dump the received datagram
+        // optionally dump the received datagram (disabled while replaying to avoid extra I/O)
         maybe_dump_datagram(src, &buf[..len]);
 
         Ok((len, src))
     }
 }
 
-fn udp_replay() -> &'static Option<Mutex<BufReader<File>>> {
-    static UDP_REPLAY: OnceLock<Option<Mutex<BufReader<File>>>> = OnceLock::new();
+struct ReplayState {
+    data: Vec<u8>,
+    position: usize,
+}
+
+fn udp_replay() -> &'static Option<Mutex<ReplayState>> {
+    static UDP_REPLAY: OnceLock<Option<Mutex<ReplayState>>> = OnceLock::new();
     UDP_REPLAY.get_or_init(|| match std::env::var("UDP_REPLAY") {
-        Ok(path) => match File::open(&path) {
-            Ok(file) => {
-                println!("replaying UDP packets from {path}");
-                Some(Mutex::new(BufReader::new(file)))
+        Ok(path) => match std::fs::read(&path) {
+            Ok(data) => {
+                println!("replaying UDP packets from {path} ({} bytes loaded)", data.len());
+                Some(Mutex::new(ReplayState { data, position: 0 }))
             }
             Err(e) => {
-                eprintln!("failed to open UDP_REPLAY file: {e}");
+                eprintln!("failed to read UDP_REPLAY file: {e}");
                 None
             }
         },
@@ -50,52 +52,54 @@ fn udp_replay() -> &'static Option<Mutex<BufReader<File>>> {
     })
 }
 
-async fn recv_from_replay(reader_mutex: &Mutex<BufReader<File>>, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-    // loop is needed to implement artificial blocking behavior on EOF
-    // until somebody appends more data to the capture
+async fn recv_from_replay(state_mutex: &Mutex<ReplayState>, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
     loop {
-        use std::io::{Read, Seek, SeekFrom};
-        enum ReplayAttempt {
-            Data(usize, SocketAddr),
-            Eof,
-        }
-        // file I/O while holding the lock only synchronously, drop lock before any .await
-        let attempt = {
-            let mut reader = reader_mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let mut data = Vec::new();
-            let bytes_read = reader.read_to_end(&mut data)?;
-            if bytes_read == 0 {
-                ReplayAttempt::Eof
+        let result = {
+            let mut state = state_mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+            // check if we've reached the end of the data
+            if state.position >= state.data.len() {
+                None
             } else {
-                let (dgram, consumed) = decode_from_slice::<UdpLoggedDatagram, _>(&data, standard())
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-                let current_pos = reader.stream_position()?;
-                reader.seek(SeekFrom::Start(current_pos - (bytes_read as u64) + (consumed as u64)))?;
-
-                let payload = dgram.data();
-                let copy_len = std::cmp::min(payload.len(), buf.len());
-                buf[..copy_len].copy_from_slice(&payload[..copy_len]);
-
-                ReplayAttempt::Data(copy_len, dgram.src())
+                // try to decode a datagram from the current position
+                let remaining = &state.data[state.position..];
+                match decode_from_slice::<UdpLoggedDatagram, _>(remaining, standard()) {
+                    Ok((dgram, consumed)) => {
+                        state.position += consumed;
+                        let payload = dgram.data();
+                        let copy_len = std::cmp::min(payload.len(), buf.len());
+                        buf[..copy_len].copy_from_slice(&payload[..copy_len]);
+                        Some(Ok((copy_len, dgram.src())))
+                    }
+                    Err(_) => {
+                        // if decode fails and we're at the end, we're done
+                        if state.position >= state.data.len() {
+                            None
+                        } else {
+                            // skip a byte and try again (corrupted data)
+                            state.position += 1;
+                            continue;
+                        }
+                    }
+                }
             }
         };
 
-        match attempt {
-            ReplayAttempt::Eof => {
-                sleep(Duration::from_secs(10)).await;
+        match result {
+            Some(data) => return data,
+            None => {
+                sleep(Duration::from_secs(1)).await;
                 continue;
-            }
-            ReplayAttempt::Data(copy_len, src) => {
-                // re-dump what we 'received' if dumping is enabled
-                maybe_dump_datagram(src, &buf[..copy_len]);
-                return Ok((copy_len, src));
             }
         }
     }
 }
 
 fn maybe_dump_datagram(src: SocketAddr, payload: &[u8]) {
+    // Avoid re-dumping while replaying to prevent extra I/O and potential feedback loops
+    // if udp_replay().as_ref().is_some() {
+    //     return;
+    // }
     if let Some(file_mutex) = udp_dump().as_ref() {
         if let Ok(mut f) = file_mutex.lock() {
             let dgram = UdpLoggedDatagram::new(src, payload.to_vec());

@@ -1,6 +1,6 @@
 use crate::consensus::{DST_MOTION, DST_POP};
-use crate::misc::blake3;
-use crate::misc::bls12_381;
+use crate::utils::blake3;
+use crate::utils::bls12_381;
 
 use crate::bic::coin;
 use crate::bic::sol;

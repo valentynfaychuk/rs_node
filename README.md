@@ -32,11 +32,12 @@ brew install rocksdb # or on MacOS (this will install `rocksdb_ldb` and `rocksdb
 Check `.cargo/config.toml` for command aliases.
 Environment variables are:
 
-- `UDP_ADDR` - address of the node to connect to, default `127.0.0.1:36969`
+- `UDP_ADDR` - address of the initial peer, default `127.0.0.1:36969`
 - `ROOT` - root directory to use, default `run.local`
 - `SK` - secret key to use, by default is generated as `$ROOT/sk`
 - `UDP_DUMP` - file to dump the UDP traffic to
 - `UDP_REPLAY` - file to replay the UDP traffic from
+- `HTTP_PORT` - port to use for the web UI
 
 ### Unittests
 
@@ -193,6 +194,10 @@ Before pushing changes, run `cargo fmt` and `cargo clippy` to maintain the quali
 
 ## TODO
 
-- [ ] Parsing into MessageV2
+- [ ] Get metrics on the dashboard
+- [ ] Connect to the real network
+- [ ] Debug and test the light client
+- [ ] Validation - through attestations
+- [ ] Implement the mutations hash
+- [ ] Running contracts in wasm runtime
 - [ ] Refactoring the RocksDB and Fabric
-- [ ] For error metrics, add the error argument

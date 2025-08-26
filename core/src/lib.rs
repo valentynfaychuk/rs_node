@@ -7,8 +7,8 @@ pub mod config;
 pub mod consensus;
 pub mod genesis;
 pub mod metrics;
-pub mod misc;
 pub mod node;
+pub mod utils;
 pub mod wasm;
 
 #[derive(thiserror::Error, Debug)]
@@ -16,7 +16,7 @@ pub enum Error {
     #[error(transparent)]
     Fabric(#[from] consensus::fabric::Error),
     #[error(transparent)]
-    Archiver(#[from] misc::archiver::Error),
+    Archiver(#[from] utils::archiver::Error),
 }
 
 pub async fn init(config: &Config) -> Result<(), Error> {
@@ -24,7 +24,7 @@ pub async fn init(config: &Config) -> Result<(), Error> {
     // this function can be used to set up logging, metrics, etc
     // currently, it does nothing but can be extended in the future
     consensus::fabric::init(config.get_root()).await?;
-    misc::archiver::init(config.get_root()).await?;
+    utils::archiver::init(config.get_root()).await?;
 
     Ok(())
 }

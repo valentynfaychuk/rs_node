@@ -1,9 +1,9 @@
 use crate::consensus::agg_sig::DST_ATT;
-use crate::misc::bls12_381 as bls;
-use crate::misc::bls12_381::Error as BlsError;
-use crate::misc::utils::{TermExt, TermMap};
+use crate::utils::bls12_381 as bls;
+use crate::utils::bls12_381::Error as BlsError;
+use crate::utils::misc::{TermExt, TermMap};
 use crate::node::protocol;
-use crate::node::protocol::Proto;
+use crate::node::protocol::Protocol;
 use eetf::DecodeError as EtfDecodeError;
 use eetf::EncodeError as EtfEncodeError;
 use eetf::{Atom, Binary, List, Term};
@@ -54,11 +54,14 @@ impl Debug for Attestation {
     }
 }
 
-#[async_trait::async_trait]
-impl Proto for AttestationBulk {
-    fn get_name(&self) -> &'static str {
+impl crate::utils::misc::Typename for AttestationBulk {
+    fn typename(&self) -> &'static str {
         Self::NAME
     }
+}
+
+#[async_trait::async_trait]
+impl Protocol for AttestationBulk {
 
     #[instrument(skip(map), name = "AttestationBulk::from_etf_map_validated")]
     fn from_etf_map_validated(map: TermMap) -> Result<Self, protocol::Error> {

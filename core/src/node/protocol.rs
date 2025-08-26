@@ -6,10 +6,10 @@ use crate::consensus::consensus::{get_chain_rooted_tip_entry, get_chain_tip_entr
 use crate::consensus::entry::{Entry, EntrySummary};
 use crate::consensus::tx;
 use crate::consensus::{DST_NODE, attestation, entry};
-use crate::metrics;
-use crate::misc::reed_solomon::ReedSolomonResource;
-use crate::misc::utils::{TermExt, TermMap, get_unix_millis_now, get_unix_nanos_now};
-use crate::misc::{bls12_381 as bls, reed_solomon};
+use crate::utils::misc::Typename;
+use crate::utils::reed_solomon::ReedSolomonResource;
+use crate::utils::misc::{TermExt, TermMap, get_unix_millis_now, get_unix_nanos_now};
+use crate::utils::{bls12_381 as bls, reed_solomon};
 use crate::node::msg_v2;
 use crate::node::msg_v2::MessageV2;
 use eetf::convert::TryAsRef;
@@ -23,22 +23,18 @@ use tracing::{instrument, warn};
 /// Every object that has this trait must be convertible from an Erlang ETF
 /// Binary representation and must be able to handle itself as a message
 #[async_trait::async_trait]
-pub trait Proto: Send + Sync {
-    fn get_name(&self) -> &'static str;
+pub trait Protocol: Typename + Send + Sync {
     fn from_etf_map_validated(map: TermMap) -> Result<Self, Error>
     where
         Self: Sized;
     /// Handle a message returning instructions for upper layers
-    #[instrument(skip(self), fields(proto = %self.get_name()), name = "Proto::handle")]
+    #[instrument(skip(self), fields(proto = %self.typename()), name = "Proto::handle")]
     async fn handle(&self) -> Result<Instruction, Error> {
+        crate::metrics::METRICS.add_handled_proto_by_name(self.typename());
         match self.handle_inner().await {
-            Ok(i) => {
-                metrics::inc_handled_counter_by_name(self.get_name());
-                Ok(i)
-            }
+            Ok(i) => Ok(i),
             Err(e) => {
-                warn!("Error handling {}: {}", self.get_name(), e);
-                metrics::inc_handling_errors(&e);
+                crate::metrics::METRICS.add_error(&e);
                 Err(e)
             }
         }
@@ -48,7 +44,7 @@ pub trait Proto: Send + Sync {
     fn to_etf_bin(&self) -> Result<Vec<u8>, Error>; // TODO: must be separate for types (not in trait)
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, strum_macros::IntoStaticStr)]
 pub enum Error {
     #[error(transparent)]
     Io(#[from] IoError),
@@ -72,6 +68,12 @@ pub enum Error {
     Decompress(DecompressError),
     #[error("bad etf: {0}")]
     BadEtf(&'static str),
+}
+
+impl crate::utils::misc::Typename for Error {
+    fn typename(&self) -> &'static str {
+        self.into()
+    }
 }
 
 impl From<DecompressError> for Error {
@@ -104,18 +106,18 @@ pub enum Instruction {
 
 /// Also does the validation
 #[instrument(skip(bin), name = "Proto::from_etf_validated")]
-pub fn from_etf_bin(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
-    from_etf_bin_inner(bin).inspect_err(|e| metrics::inc_parsing_and_validation_errors(e))
+pub fn from_etf_bin(bin: &[u8]) -> Result<Box<dyn Protocol>, Error> {
+    from_etf_bin_inner(bin).inspect_err(|e| crate::metrics::METRICS.add_error(e))
 }
 
-fn from_etf_bin_inner(bin: &[u8]) -> Result<Box<dyn Proto>, Error> {
+fn from_etf_bin_inner(bin: &[u8]) -> Result<Box<dyn Protocol>, Error> {
     let decompressed = decompress_to_vec(bin)?;
     let term = Term::decode(decompressed.as_slice())?;
     let map = term.get_term_map().ok_or(Error::BadEtf("map"))?;
 
     // `op` determines the variant
     let op_atom = map.get_atom("op").ok_or(Error::BadEtf("op"))?;
-    let proto: Box<dyn Proto> = match op_atom.name.as_str() {
+    let proto: Box<dyn Protocol> = match op_atom.name.as_str() {
         Ping::NAME => Box::new(Ping::from_etf_map_validated(map)?),
         Pong::NAME => Box::new(Pong::from_etf_map_validated(map)?),
         Entry::NAME => Box::new(Entry::from_etf_map_validated(map)?),
@@ -201,11 +203,14 @@ pub struct SolicitEntry {
 #[derive(Debug)]
 pub struct SolicitEntry2;
 
-#[async_trait::async_trait]
-impl Proto for Ping {
-    fn get_name(&self) -> &'static str {
+impl Typename for Ping {
+    fn typename(&self) -> &'static str {
         Self::NAME
     }
+}
+
+#[async_trait::async_trait]
+impl Protocol for Ping {
     fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
         let temporal_term = map.get_term_map("temporal").ok_or(Error::BadEtf("temporal"))?;
         let rooted_term = map.get_term_map("rooted").ok_or(Error::BadEtf("rooted"))?;
@@ -402,12 +407,14 @@ impl Ping {
     }
 }
 
-#[async_trait::async_trait]
-impl Proto for Pong {
-    fn get_name(&self) -> &'static str {
+impl Typename for Pong {
+    fn typename(&self) -> &'static str {
         Self::NAME
     }
+}
 
+#[async_trait::async_trait]
+impl Protocol for Pong {
     fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
         let ts_m = map.get_integer("ts_m").ok_or(Error::BadEtf("ts_m"))?;
         let seen_time_ms = get_unix_millis_now();
@@ -439,12 +446,14 @@ impl Pong {
     pub const NAME: &'static str = "pong";
 }
 
-#[async_trait::async_trait]
-impl Proto for TxPool {
-    fn get_name(&self) -> &'static str {
+impl Typename for TxPool {
+    fn typename(&self) -> &'static str {
         Self::NAME
     }
+}
 
+#[async_trait::async_trait]
+impl Protocol for TxPool {
     fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
         let txs = map.get_binary("txs_packed").ok_or(Error::BadEtf("txs_packed"))?;
         let valid_txs = TxPool::get_valid_txs(txs)?;
@@ -513,12 +522,14 @@ impl TxPool {
     }
 }
 
-#[async_trait::async_trait]
-impl Proto for Peers {
-    fn get_name(&self) -> &'static str {
+impl Typename for Peers {
+    fn typename(&self) -> &'static str {
         Self::NAME
     }
+}
 
+#[async_trait::async_trait]
+impl Protocol for Peers {
     fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
         let list = map.get_list("ips").ok_or(Error::BadEtf("ips"))?;
         let ips = list
@@ -576,7 +587,7 @@ mod tests {
         let result = from_etf_bin(&compressed_bin).expect("should deserialize");
 
         // check that we get the right type
-        assert_eq!(result.get_name(), "ping");
+        assert_eq!(result.typename(), "ping");
     }
 
     #[tokio::test]
@@ -586,7 +597,8 @@ mod tests {
         let compressed_bin = pong.to_etf_bin().expect("should serialize");
         let result = from_etf_bin(&compressed_bin).expect("should deserialize");
 
-        assert_eq!(result.get_name(), "pong");
+        // check that the result type is Pong
+        assert_eq!(result.typename(), "pong");
     }
 
     #[tokio::test]
@@ -596,7 +608,7 @@ mod tests {
         let compressed_bin = txpool.to_etf_bin().expect("should serialize");
         let result = from_etf_bin(&compressed_bin).expect("should deserialize");
 
-        assert_eq!(result.get_name(), "txpool");
+        assert_eq!(result.typename(), "txpool");
     }
 
     #[tokio::test]
@@ -606,7 +618,7 @@ mod tests {
         let compressed_bin = peers.to_etf_bin().expect("should serialize");
         let result = from_etf_bin(&compressed_bin).expect("should deserialize");
 
-        assert_eq!(result.get_name(), "peers");
+        assert_eq!(result.typename(), "peers");
     }
 
     fn create_dummy_entry_summary() -> EntrySummary {

@@ -343,7 +343,7 @@ mod host_functions {
 
         match context.read_bytes_with_store(&store, data_ptr as u32, data_len as u32) {
             Ok(data) => {
-                let hash = crate::misc::blake3::hash(&data);
+                let hash = crate::utils::blake3::hash(&data);
                 match context.write_bytes_with_store(&store, out_ptr as u32, &hash) {
                     Ok(_) => hash.len() as i32,
                     Err(_) => -1,

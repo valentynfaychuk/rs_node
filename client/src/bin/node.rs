@@ -1,12 +1,12 @@
-use std::net::SocketAddr;
-use std::time::Duration;
-use tokio::net::UdpSocket;
-use tokio::time::timeout;
-
+use ama_core::metrics::METRICS;
 use ama_core::node::ReedSolomonReassembler;
 use ama_core::node::msg_v2::MessageV2;
 use ama_core::node::protocol::{Instruction, from_etf_bin};
 use client::{DumpReplaySocket, PING, get_ama_config, get_udp_addr, init_tracing};
+use std::net::SocketAddr;
+use std::time::Duration;
+use tokio::net::UdpSocket;
+use tokio::time::timeout;
 
 use plot::{serve, state::AppState};
 
@@ -59,7 +59,7 @@ async fn recv_loop(socket: UdpSocket, app_state: AppState, reassembler: ReedSolo
         match timeout(Duration::from_secs(10), socket.dump_replay_recv_from(&mut buf)).await {
             Err(_) => {
                 // If no packets for a while, print metrics
-                println!("{}", ama_core::metrics::get_metrics());
+                println!("{}", METRICS.get_prometheus());
                 continue;
             }
             Ok(Err(e)) => return Err(e),
@@ -103,7 +103,7 @@ async fn handle(
                     // final shard received - reassembler assembled the message
                     match from_etf_bin(&payload) {
                         Ok(proto) => {
-                            app_state.seen_peer(src, Some(pk_str), Some(proto.get_name().into())).await;
+                            app_state.seen_peer(src, Some(pk_str), Some(proto.typename().into())).await;
                             match proto.handle().await {
                                 Ok(instruction) => return Some(instruction),
                                 Err(e) => {

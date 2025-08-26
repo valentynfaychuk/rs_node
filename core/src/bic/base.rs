@@ -1,7 +1,7 @@
 use crate::consensus::kv;
 use crate::consensus::kv::Mutation;
 use crate::consensus::tx::TxU;
-use crate::misc::utils::pk_hex;
+use crate::utils::misc::pk_hex;
 use blake3;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -217,7 +217,7 @@ fn execute_action_safe(env: &crate::bic::epoch::CallEnv, txu: &TxU) -> ActionRes
     };
 
     // Check if contract is a valid BLS public key (WASM contract)
-    if crate::misc::bls12_381::validate_public_key(&action.contract).is_ok() {
+    if crate::utils::bls12_381::validate_public_key(&action.contract).is_ok() {
         // WASM contract call
         execute_wasm_contract(env, txu, action)
     } else {

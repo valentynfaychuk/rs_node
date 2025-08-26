@@ -1,4 +1,4 @@
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, strum_macros::IntoStaticStr)]
 pub enum Error {
     #[error("message v2 is only {0} bytes")]
     WrongLength(usize),
@@ -26,6 +26,12 @@ pub enum Error {
     InvalidOriginalSize(u32),
     #[error("version is not supported")]
     VersionNotSupported,
+}
+
+impl crate::utils::misc::Typename for Error {
+    fn typename(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// Signed Message Format (BLS Signature)
@@ -61,8 +67,8 @@ pub struct MessageV2 {
 impl TryFrom<&[u8]> for MessageV2 {
     type Error = Error;
     fn try_from(bin: &[u8]) -> Result<Self, Self::Error> {
-        crate::metrics::inc_v2udp_packets();
-        Self::try_from_inner(bin).inspect_err(|e| crate::metrics::inc_v2_parsing_errors(e))
+        crate::metrics::METRICS.add_v2_udp_packet(bin.len());
+        Self::try_from_inner(bin).inspect_err(|e| crate::metrics::METRICS.add_error(e))
     }
 }
 

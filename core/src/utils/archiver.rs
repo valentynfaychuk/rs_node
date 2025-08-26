@@ -53,7 +53,7 @@ mod tests {
     use tokio::fs::{read, read_to_string};
 
     fn unique_base() -> String {
-        let ts = crate::misc::utils::get_unix_nanos_now();
+        let ts = crate::utils::misc::get_unix_nanos_now();
         let pid = std::process::id();
         format!("{}/rs_node_archiver_test_{}_{}", std::env::temp_dir().display(), pid, ts)
     }

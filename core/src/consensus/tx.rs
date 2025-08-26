@@ -1,8 +1,8 @@
 use crate::config::Config;
 use crate::consensus::DST_TX;
-use crate::misc::blake3;
-use crate::misc::bls12_381;
-use crate::misc::vanilla_ser::{self, Value};
+use crate::utils::blake3;
+use crate::utils::bls12_381;
+use crate::utils::vanilla_ser::{self, Value};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
