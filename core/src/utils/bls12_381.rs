@@ -98,15 +98,14 @@ pub fn get_public_key(sk_bytes: &[u8]) -> Result<[u8; 48], Error> {
     Ok(pk.to_bytes())
 }
 
-pub fn generate_sk() -> Result<[u8; 64], Error> {
+pub fn generate_sk() -> [u8; 64] {
     let ikm: [u8; 32] = rand::random();
     let sk = BlsSecretKey::key_gen(&ikm, &[]).expect("should not fail");
     let sk_bytes = sk.to_bytes();
-    println!("Secret key (32 bytes): {}", bs58::encode(sk_bytes).into_string());
     // Return as 64-byte array (padding with zeros to match format)
     let mut result = [0u8; 64];
     result[0..32].copy_from_slice(&sk_bytes);
-    Ok(result)
+    result
 }
 
 /// Sign a message with secret key, returns signature bytes (96 bytes in min_pk)

@@ -1,11 +1,11 @@
 [workspace]
 resolver = "3"
 
-members = ["core", "client", "dashboard"]
+members = ["core", "client", "http"]
 
 [workspace.dependencies]
 ama_core = { path = "core" }
-dashboard = { path = "dashboard" }
+http = { path = "http" }
 
 [patch.crates-io]
 bls12_381 = { git = "https://github.com/vans163/bls12_381" } # has newer deps

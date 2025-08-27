@@ -24,6 +24,8 @@ pub enum Error {
     Fabric(#[from] consensus::fabric::Error),
     #[error(transparent)]
     Archiver(#[from] utils::archiver::Error),
+    #[error(transparent)]
+    Config(#[from] config::Error),
 }
 
 /// Reads UDP datagram and silently does parsing, validation and reassembly
@@ -66,7 +68,7 @@ pub struct PeerInfo {
 
 impl Context {
     pub async fn new() -> Result<Self, Error> {
-        let config = config::Config::generate_new(None).await;
+        let config = config::Config::from_fs(None, None).await?;
         Self::with_config(config).await
     }
 
@@ -78,11 +80,9 @@ impl Context {
         use tokio::time::{Duration, interval};
         use utils::archiver::init_storage;
 
-        // initialize the global state or perform any necessary setup
-        // this function can be used to set up logging, metrics, etc
-        // currently, it does nothing but can be extended in the future
-        init_kvdb(config.get_root()).await?;
-        init_storage(config.get_root()).await?;
+        let root = config.get_root()?;
+        init_kvdb(root).await?;
+        init_storage(root).await?;
 
         const CLEANUP_SECS: u64 = 8;
         let reassembler = Arc::new(Reassembler::new());

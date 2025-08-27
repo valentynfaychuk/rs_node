@@ -1,4 +1,4 @@
-use client::{DumpReplaySocket, PING, get_dashboard_port, get_peer_addr, init_tracing};
+use client::{DumpReplaySocket, PING, get_http_port, get_peer_addr, init_tracing};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, UdpSocket};
@@ -6,7 +6,7 @@ use tokio::spawn;
 use tokio::time::timeout;
 
 use ama_core::{Context, read_udp_packet};
-use dashboard::serve;
+use http::serve;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     // HTTP dashboard server
     let ctx_http = ctx.clone();
     let http = spawn(async move {
-        let port = get_dashboard_port();
+        let port = get_http_port();
         let socket = TcpListener::bind(&format!("0.0.0.0:{port}")).await.expect("bind http");
 
         println!("http listening on {port}");

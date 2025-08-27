@@ -1,6 +1,6 @@
 use crate::utils::bls12_381;
-use rand::RngCore;
-use std::path::PathBuf;
+pub use crate::utils::bls12_381::generate_sk as gen_sk;
+use std::path::Path;
 use tokio::fs;
 
 pub const ENTRY_SIZE: usize = 524288; // 512 KiB
@@ -9,18 +9,29 @@ pub const ATTESTATION_SIZE: usize = 512;
 pub const QUORUM: usize = 3; // quorum size for AMA
 pub const QUORUM_SINGLE: usize = 1; // quorum size for single shard
 
-// node configuration getters (hardcoded for now)
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    B58(#[from] bs58::decode::Error),
+    #[error(transparent)]
+    Bls(#[from] bls12_381::Error),
+    #[error("invalid sk length: {0}, expected 64")]
+    InvalidSkLength(usize),
+    #[error("root directory is not set")]
+    RootNotSet,
+}
 
 pub struct Config {
-    pub root: String,
-    pub sk: [u8; 64],
+    root: Option<String>,
+    sk: [u8; 64],
 }
 
 impl Config {
     /// Generates pk from self.sk
     pub fn get_pk(&self) -> [u8; 48] {
-        //bls12_381::get_public_key(&self.sk).unwrap_or([0u8; 48])
-        bls12_381::get_public_key(&self.sk).unwrap()
+        get_pk(&self.sk)
     }
 
     pub fn get_sk(&self) -> [u8; 64] {
@@ -28,53 +39,48 @@ impl Config {
     }
 
     /// Returns root work folder path
-    pub fn get_root(&self) -> &str {
-        &self.root
+    pub fn get_root(&self) -> Result<&str, Error> {
+        self.root.as_deref().ok_or(Error::RootNotSet)
     }
 
     /// Create Config instance with default root and loaded/generated secret key
-    pub async fn generate_new(root: Option<String>) -> Self {
-        let root = root.unwrap_or_else(|| ".config/amadeusd".to_string());
-        let sk = load_or_generate_sk(&root).await;
-        Self { root, sk }
-    }
-}
+    pub async fn from_fs(root: Option<&str>, sk: Option<&str>) -> Result<Self, Error> {
+        let root = root.unwrap_or(".config/amadeusd");
+        fs::create_dir_all(&root).await?; // make sure directory exists
 
-/// Load or generate secret key for the given root directory
-async fn load_or_generate_sk(root: &str) -> [u8; 64] {
-    let work_path = PathBuf::from(format!("{root}/sk"));
-    if work_path.exists() {
-        if let Some(arr) = read_b58_sk(&work_path).await {
-            return arr;
+        // if sk path is provided, it MUST be valid
+        if let Some(path) = sk {
+            let sk = read_sk(path).await?;
+            return Ok(Self { root: Some(root.into()), sk });
         }
+
+        if let Ok(sk) = read_sk(&format!("{root}/sk")).await {
+            return Ok(Self { root: Some(root.into()), sk });
+        }
+
+        let sk = gen_sk();
+        write_sk(format!("{root}/sk"), sk).await?;
+        println!("created {root}/sk, pk {}", bs58::encode(get_pk(&sk)).into_string());
+
+        Ok(Self { root: Some(root.into()), sk })
     }
 
-    // Not found or invalid: generate new 64-byte secret key, save as Base58, print pk
-    let mut sk = [0u8; 64];
-    let mut rng = rand::rngs::OsRng;
-    rng.fill_bytes(&mut sk);
-
-    // Derive public key and print message
-    let pk = bls12_381::get_public_key(&sk).unwrap_or([0u8; 48]);
-    println!("generated random sk, your pk is {}", bs58::encode(pk).into_string());
-
-    if let Some(parent) = work_path.parent() {
-        let _ = fs::create_dir_all(parent).await;
+    pub fn from_sk(sk: [u8; 64]) -> Self {
+        Self { root: None, sk }
     }
-    let b58 = bs58::encode(sk).into_string();
-    let _ = fs::write(&work_path, b58).await;
-
-    sk
 }
 
-pub async fn read_b58_sk(path: &PathBuf) -> Option<[u8; 64]> {
-    let s = fs::read_to_string(path).await.ok()?;
-    let s_trim = s.trim();
-    match bs58::decode(s_trim).into_vec() {
-        Ok(bytes) => match <[u8; 64]>::try_from(bytes.as_slice()) {
-            Ok(arr) => Some(arr),
-            Err(_) => None,
-        },
-        Err(_) => None,
-    }
+pub fn get_pk(sk: &[u8; 64]) -> [u8; 48] {
+    bls12_381::get_public_key(sk).unwrap() // 64-byte sk is always be valid
+}
+
+pub async fn write_sk(path: impl AsRef<Path>, sk: [u8; 64]) -> Result<(), Error> {
+    let sk_b58 = bs58::encode(sk).into_string();
+    fs::write(path, sk_b58).await.map_err(Into::into)
+}
+
+pub async fn read_sk(path: impl AsRef<Path>) -> Result<[u8; 64], Error> {
+    let sk_bs58 = fs::read_to_string(path).await?;
+    let sk_vec = bs58::decode(sk_bs58.trim()).into_vec()?;
+    sk_vec.try_into().map_err(|v: Vec<u8>| Error::InvalidSkLength(v.len()))
 }

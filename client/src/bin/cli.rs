@@ -1,10 +1,8 @@
 use ama_core::bic::contract;
-use ama_core::config::Config;
+use ama_core::config::{Config, gen_sk, get_pk, read_sk, write_sk};
 use ama_core::consensus::tx;
 use bs58;
 use clap::{Parser, Subcommand};
-use client::get_ama_config;
-use rand::RngCore;
 use serde_json::Value as JsonValue;
 use std::fs;
 
@@ -18,7 +16,7 @@ Notes:
       • {"b58": "..."} => Base58-decoded bytes
       • {"hex": "..."} => hex-decoded bytes (with or without 0x)
       • {"utf8": "..."} => UTF-8 bytes
-  - Secret key: use --sk-file to read Base58-encoded secret key file (recommended). If omitted, defaults to run.local/sk.
+  - Secret key: use --sk env variable for secret key.
   - deploytx validates the WASM by compiling it with wasmer before building the tx."#)]
 struct Cli {
     #[command(subcommand)]
@@ -33,9 +31,16 @@ enum Commands {
         out_file: String,
     },
     /// Get public key from secret key file (Base58-encoded 64-byte secret key)
-    GetPk {},
+    GetPk {
+        /// Path to the secret key file
+        #[arg(long = "sk")]
+        sk: String,
+    },
     /// Build a transaction for contract function call
     BuildTx {
+        /// Path to the secret key file
+        #[arg(long = "sk")]
+        sk: String,
         /// Contract address (Base58) or name
         contract: String,
         /// Function name to call
@@ -52,6 +57,9 @@ enum Commands {
     },
     /// Build a transaction to deploy WASM contract
     DeployTx {
+        /// Path to the secret key file
+        #[arg(long = "sk")]
+        sk: String,
         /// Path to WASM file
         wasm_path: String,
         /// Send the transaction to the network instead of just printing it
@@ -91,16 +99,16 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::GenSk { out_file } => handle_gensk(&out_file),
-        Commands::GetPk {} => handle_getpk(&get_ama_config().await),
-        Commands::BuildTx { contract, function, args_json, attach_symbol, attach_amount, send } => {
+        Commands::GenSk { out_file } => handle_gensk(&out_file).await,
+        Commands::GetPk { sk } => handle_getpk(&config_from_sk(&sk).await),
+        Commands::BuildTx { sk, contract, function, args_json, attach_symbol, attach_amount, send } => {
             if attach_symbol.is_some() != attach_amount.is_some() {
                 eprintln!("Error: attach_amount and attach_symbol must go together");
                 std::process::exit(2);
             }
 
             handle_buildtx(
-                &get_ama_config().await,
+                &config_from_sk(&sk).await,
                 &contract,
                 &function,
                 &args_json,
@@ -110,24 +118,16 @@ async fn main() {
             )
             .await;
         }
-        Commands::DeployTx { wasm_path, send } => {
-            handle_deploytx(&get_ama_config().await, &wasm_path, send).await;
+        Commands::DeployTx { sk, wasm_path, send } => {
+            handle_deploytx(&config_from_sk(&sk).await, &wasm_path, send).await;
         }
     }
 }
 
-fn handle_gensk(out_file: &str) {
-    // Generate a fresh random 64-byte sk and write as Base58 into file, print derived pk
-    let mut sk = [0u8; 64];
-    let mut rng = rand::rngs::OsRng;
-    rng.fill_bytes(&mut sk);
-    let b58 = bs58::encode(sk).into_string();
-    if let Err(e) = fs::write(out_file, &b58) {
-        eprintln!("failed to write sk file: {}", e);
-        std::process::exit(2);
-    }
-    let config = Config { root: "".into(), sk };
-    println!("generated random sk, your pk is {}", bs58::encode(config.get_pk()).into_string());
+async fn handle_gensk(path: &str) {
+    let sk = gen_sk();
+    write_sk(path, sk).await.expect("write sk");
+    println!("created {path}, pk {}", bs58::encode(get_pk(&sk)).into_string());
     std::process::exit(0);
 }
 
@@ -244,4 +244,9 @@ async fn handle_deploytx(config: &Config, wasm_path: &str, send: bool) {
         println!("{}", bs58::encode(tx_packed).into_string());
         std::process::exit(0);
     }
+}
+
+pub async fn config_from_sk(sk: &str) -> Config {
+    let sk = read_sk(sk).await.expect("valid sk");
+    Config::from_sk(sk)
 }

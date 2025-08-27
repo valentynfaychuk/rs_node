@@ -4,7 +4,7 @@ This initiative aims to create a Rust implementation of the [Amadeus Node](https
 
 - core (ama_core): Core library, needed by every project in Amadeus ecosystem
 - client: The library with examples of using the core library (cli, node, etc.)
-- plot: Web dashboard, used by the client
+- http: Web dashboard of the Amadeus Node, by default runs on port 3000
 
 ## Prerequisites
 
@@ -29,12 +29,9 @@ brew install rocksdb # or on MacOS (this will install `rocksdb_ldb` and `rocksdb
 
 ## Testing
 
-Check `.cargo/config.toml` for command aliases.
-Environment variables are:
+Check `.cargo/config.toml` for command aliases. Environment variables:
 
-- `UDP_ADDR` - address of the initial peer, default `127.0.0.1:36969`
-- `ROOT` - root directory to use, default `run.local`
-- `SK` - secret key to use, by default is generated as `$ROOT/sk`
+- `UDP_ADDR` - address of the peer, default `127.0.0.1:36969`
 - `UDP_DUMP` - file to dump the UDP traffic to
 - `UDP_REPLAY` - file to replay the UDP traffic from
 - `HTTP_PORT` - port to use for the web UI
@@ -54,45 +51,41 @@ cargo test-all
 ### CLI
 
 CLI is a client that can deploy a contract or send transactions.
-Examples of usage:
 
 ```bash
-cargo cli gen-sk test
-cargo cli get-pk
-SK=test cargo cli get-pk
-cargo cli build-tx Contract test "[]"
-cargo cli deploy-tx contracts/simple_counter.wasm
-UDP_ADDR="127.0.0.1:36969" SK=test cargo cli build-tx Contract test "[]" --send
-UDP_ADDR="127.0.0.1:36969" SK=test cargo cli deploy-tx contracts/simple_counter.wasm --send
+cargo cli gen-sk sk.local
+cargo cli get-pk --sk sk.local
+cargo cli build-tx Contract test "[]" --sk sk.local --send
+cargo cli deploy-tx contracts/simple_counter.wasm --sk sk.local --send
 ```
 
 ### Node simulation (NATIVE)
 
 The client library has the implementation of a traffic capturing
 and replay natively through rust, the size of the capture is a bit
-smaller than pcap capture 8.3M vs 8.8M, and the **format is custom
+smaller than pcap capture 8.3M vs 8.7M, and the **format is custom
 binary and can't be reliably dumped/parsed/rewritten elsewhere**.
 
 ```bash
-# Record traffic to log when running a node
+# Record traffic to log.local when running a node
 # This command is not transparent and will require the UDP socket,
 # beware when running it alongside another running amadeus node
-UDP_DUMP=log cargo node
+UDP_DUMP=log.local cargo node
 ```
 
-The `log` file has the binary capture of the traffic. If you
+The `log.local` file has the binary capture of the traffic. If you
 run the above command second time, the new capture will get appended.
 
 ```bash
 # Replay the captured traffic
-UDP_REPLAY=log cargo node
+UDP_REPLAY=log.local cargo node
 ```
 
 ### Node simulation (PCAP)
 
-Run the `scripts/rewrite-pcaps.sh en0` script to rewrite the pcap
-files to match your LAN, this is needed to fix the addressing for
-the replay, feel free to choose any interface.
+Before running the simulation, run `scripts/rewrite-pcaps.sh en0`
+to rewrite the pcap files to match your LAN, this is needed to fix
+the replay addressing, feel free to choose any interface.
 
 ```bash
 cargo node
@@ -104,16 +97,6 @@ Optionally you can watch the replay as it happens:
 
 ```bash
 tcpdump -i en0 -n -vv udp dst port 36969 # to watch replay in real time
-```
-
-After replaying the `pcaps/test.pcap.local` file, wait 10s with no
-traffic, and the node will print metrics, they must be as follows:
-
-```bash
-amadeus_protocol_messages_total{type="ping"} 8656
-amadeus_protocol_messages_total{type="entry"} 35
-amadeus_protocol_messages_total{type="attestation_bulk"} 1165
-amadeus_udp_packets_total 10000
 ```
 
 #### Recording capture
@@ -141,8 +124,7 @@ sysctl kern.ipc.maxsockbuf net.inet.udp.recvspace # check the values
 ```
 
 If you see that no packets can reach the light client, the reason could
-be that your IP address changed (e.g. after restart), simply recreate
-the `.local` files to use the current LAN.
+be that your IP address changed (e.g. after restart), simply rerun:
 
 ```bash
 rm pcaps/*.local && ./scripts/rewrite-pcaps.sh en0
@@ -154,10 +136,10 @@ If installed on MacOS using brew, the commands are `rocksdb_ldb` and `rocksdb_ss
 if manually - then the commands are `ldb` and `sst_dump` respectively.
 
 ```bash
-rocksdb_ldb --db=run.local/fabric/db list_column_families
-rocksdb_ldb --db=run.local/fabric/db --column_family=sysconf scan
-rocksdb_ldb --db=run.local/fabric/db --column_family=entry_by_height scan
-rocksdb_ldb --db=run.local/fabric/db --column_family=sysconf get rooted_tip
+rocksdb_ldb --db=.config/amadeusd/fabric/db list_column_families
+rocksdb_ldb --db=.config/amadeusd/fabric/db --column_family=sysconf scan
+rocksdb_ldb --db=.config/amadeusd/fabric/db --column_family=entry_by_height scan
+rocksdb_ldb --db=.config/amadeusd/fabric/db --column_family=sysconf get rooted_tip
 ```
 
 ## Performance considerations
@@ -182,19 +164,18 @@ and instead to use channels for communication between the threads.
 ## Adding core library to other project
 
 ```bash
-cargo add ama_core --git https://github.com/amadeus-robot/rs_node --package ama_core --branch main
+cargo add ama_core --git https://github.com/valentynfaychuk/rs_node --package ama_core --branch main
 # Or add following to Cargo.toml
 # [dependencies]
-# ama_core = { package = "ama_core", git = "https://github.com/amadeus-robot/rs_node", branch = "main" }
+# ama_core = { package = "ama_core", git = "https://github.com/valentynfaychuk/rs_node", branch = "main" }
 ```
 
 ## Contributing
 
 Before pushing changes, run `cargo fmt` and `cargo clippy` to maintain the quality.
 
-## TODO
+## Next
 
-- [ ] Get metrics on the dashboard
 - [ ] Connect to the real network
 - [ ] Debug and test the light client
 - [ ] Validation - through attestations

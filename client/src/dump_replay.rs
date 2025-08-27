@@ -10,6 +10,7 @@ use tokio::time::{Duration, sleep};
 #[async_trait::async_trait]
 pub trait DumpReplaySocket: Send + Sync {
     async fn dump_replay_recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr)>;
+    async fn dump_replay_send_to(&self, buf: &[u8], target: SocketAddr) -> Result<usize>;
 }
 
 #[async_trait::async_trait]
@@ -25,6 +26,15 @@ impl DumpReplaySocket for UdpSocket {
         maybe_dump_datagram(src, &buf[..len]).await;
 
         Ok((len, src))
+    }
+
+    async fn dump_replay_send_to(&self, buf: &[u8], target: SocketAddr) -> Result<usize> {
+        // dump outgoing packet with fixed source address
+        let src_addr = "127.0.0.1:39696".parse().unwrap();
+        maybe_dump_datagram(src_addr, buf).await;
+        
+        // send the packet normally
+        self.send_to(buf, target).await
     }
 }
 
