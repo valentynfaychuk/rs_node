@@ -8,7 +8,7 @@ pub struct ReedSolomonResource {
     pub decoder: ReedSolomonDecoder,
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     ReedSolomonSimd(#[from] reed_solomon_simd::Error),

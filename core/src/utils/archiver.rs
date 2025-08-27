@@ -5,7 +5,7 @@ use tokio::io::AsyncWriteExt;
 
 static ARCHIVER_DIR: OnceCell<String> = OnceCell::new();
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     TokioIo(#[from] tokio::io::Error),
@@ -13,7 +13,7 @@ pub enum Error {
     OnceCell(&'static str),
 }
 
-pub async fn init(base: &str) -> Result<(), Error> {
+pub async fn init_storage(base: &str) -> Result<(), Error> {
     if ARCHIVER_DIR.get().is_some() {
         return Ok(());
     }
@@ -66,8 +66,8 @@ mod tests {
 
         // init creates base/log and is idempotent
         let base = unique_base();
-        init(&base).await.expect("init ok");
-        init(&base).await.expect("init idempotent");
+        init_storage(&base).await.expect("init ok");
+        init_storage(&base).await.expect("init idempotent");
 
         // store without subdir
         store(b"hello", "", "one.txt").await.expect("store ok");

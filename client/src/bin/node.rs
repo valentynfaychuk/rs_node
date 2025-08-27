@@ -1,130 +1,61 @@
-use ama_core::metrics::METRICS;
-use ama_core::node::ReedSolomonReassembler;
-use ama_core::node::msg_v2::MessageV2;
-use ama_core::node::protocol::{Instruction, from_etf_bin};
-use client::{DumpReplaySocket, PING, get_ama_config, get_udp_addr, init_tracing};
-use std::net::SocketAddr;
+use client::{DumpReplaySocket, PING, get_dashboard_port, get_peer_addr, init_tracing};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::UdpSocket;
+use tokio::net::{TcpListener, UdpSocket};
+use tokio::spawn;
 use tokio::time::timeout;
 
-use plot::{serve, state::AppState};
+use ama_core::{Context, read_udp_packet};
+use dashboard::serve;
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> anyhow::Result<()> {
     init_tracing();
+    let ctx = Arc::new(Context::new().await?);
 
-    // Target UDP address of an Amadeus node.
-    let addr = get_udp_addr();
+    // HTTP dashboard server
+    let ctx_http = ctx.clone();
+    let http = spawn(async move {
+        let port = get_dashboard_port();
+        let socket = TcpListener::bind(&format!("0.0.0.0:{port}")).await.expect("bind http");
 
-    // Bind a local UDP socket (Tokio).
-    let socket = UdpSocket::bind("0.0.0.0:36969").await?;
-
-    // Send a simple ping message to the node.
-    socket.send_to(&PING, &addr).await?;
-    println!("sent");
-
-    let app_state = plot::state::AppState::new();
-
-    let s1 = app_state.clone();
-    // --- spawn HTTP server ---
-    let http = tokio::spawn(async move {
-        if let Err(e) = serve("0.0.0.0:3000", &s1).await {
-            eprintln!("server error: {e}");
+        println!("http listening on {port}");
+        if let Err(e) = serve(socket, ctx_http).await {
+            eprintln!("http server error: {e}");
         }
     });
 
-    let config = get_ama_config().await;
-    ama_core::init(&config).await.expect("core init");
-    let rs_reassembler = ReedSolomonReassembler::new();
-    rs_reassembler.start_periodic_cleanup();
+    // UDP amadeus node
+    let ctx_udp = ctx.clone();
+    let udp = spawn(async move {
+        let socket = UdpSocket::bind("0.0.0.0:36969").await.expect("bind udp");
+        socket.send_to(&PING, &get_peer_addr()).await.expect("send ping");
 
-    // --- run UDP recv loop concurrently ---
-    let udp = tokio::spawn(async move {
-        if let Err(e) = recv_loop(socket, app_state, rs_reassembler).await {
+        println!("udp listening on 36969"); // port must always be 36969
+        if let Err(e) = recv_loop(socket, ctx_udp).await {
             eprintln!("udp loop error: {e}");
         }
     });
 
     // Wait for either task to finish (or join both if you prefer)
-    let _ = tokio::try_join!(http, udp);
-
+    tokio::try_join!(http, udp)?;
     Ok(())
 }
 
-async fn recv_loop(socket: UdpSocket, app_state: AppState, reassembler: ReedSolomonReassembler) -> std::io::Result<()> {
+async fn recv_loop(socket: UdpSocket, ctx: Arc<Context>) -> anyhow::Result<()> {
     let mut buf = vec![0u8; 65_535];
+    let timeout_secs = Duration::from_secs(10);
 
     loop {
-        match timeout(Duration::from_secs(10), socket.dump_replay_recv_from(&mut buf)).await {
-            Err(_) => {
-                // If no packets for a while, print metrics
-                println!("{}", METRICS.get_prometheus());
-                continue;
-            }
-            Ok(Err(e)) => return Err(e),
-            Ok(Ok((len, src))) => {
-                match handle(&reassembler, &app_state, src, &buf[..len]).await {
-                    Some(Instruction::Noop) => {}
-                    Some(Instruction::ReplyPong { .. }) => {
-                        //println!("reply pong: {}", ts_m);
-                    }
-                    Some(Instruction::ObservedPong { .. }) => {
-                        //println!("observed pong: {} {}", ts_m, seen_time_ms);
-                    }
-                    Some(Instruction::ReceivedEntry { .. }) => {
-                        //println!("received entry");
-                    }
-                    Some(Instruction::AttestationBulk { .. }) => {
-                        //println!("received attestation bulk");
-                    }
-                    Some(_) => {
-                        //println!("handle result (ignored)");
-                    }
-                    _ => {}
+        match timeout(timeout_secs, socket.dump_replay_recv_from(&mut buf)).await {
+            Err(_) => println!("{}", ctx.get_prometheus_metrics()), // timeout
+            Ok(Err(e)) => return Err(e.into()),
+            Ok(Ok((len, src))) => match read_udp_packet(&ctx, src, &buf[..len]).await {
+                Some(proto) => {
+                    proto.handle(&ctx).await?;
                 }
-            }
+                None => {} // still waiting for more shards
+            },
         }
     }
-}
-
-async fn handle(
-    reassembler: &ReedSolomonReassembler,
-    app_state: &AppState,
-    src: SocketAddr,
-    bin: &[u8],
-) -> Option<Instruction> {
-    match MessageV2::try_from(bin) {
-        Ok(msg) => {
-            // record the peer as seen on ANY successfully parsed message
-            let pk_str = bs58::encode(&msg.pk).into_string();
-            match reassembler.add_shard(&msg).await {
-                Ok(Some(payload)) => {
-                    // final shard received - reassembler assembled the message
-                    match from_etf_bin(&payload) {
-                        Ok(proto) => {
-                            app_state.seen_peer(src, Some(pk_str), Some(proto.typename().into())).await;
-                            match proto.handle().await {
-                                Ok(instruction) => return Some(instruction),
-                                Err(e) => {
-                                    println!("failed to handle proto: {}", e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            println!("invalid proto: {}", e);
-                        }
-                    }
-                }
-                Ok(None) => {} // Still waiting for more shards, not an error
-                Err(e) => {
-                    println!("failed to reassemble: {}", e);
-                }
-            }
-        }
-        Err(e) => {
-            println!("not a v2 packet: {}", e);
-        }
-    }
-    None
 }

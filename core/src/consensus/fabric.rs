@@ -2,13 +2,13 @@ use crate::consensus;
 use crate::consensus::attestation::Attestation;
 use crate::consensus::entry::Entry;
 use crate::consensus::genesis;
-use crate::utils::rocksdb;
 use crate::utils::misc::{TermExt, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
+use crate::utils::rocksdb;
 use eetf::{Atom, Binary, Term};
 use std::collections::HashMap;
 // TODO: make the database trait that the fabric will use
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     RocksDb(#[from] rocksdb::Error),
@@ -39,7 +39,7 @@ const CF_CONSENSUS_BY_ENTRYHASH: &str = "consensus_by_entryhash";
 const CF_SYSCONF: &str = "sysconf";
 
 /// Initialize Fabric DB area (creates/open RocksDB with the required CFs)
-pub async fn init(base: &str) -> Result<(), Error> {
+pub async fn init_kvdb(base: &str) -> Result<(), Error> {
     rocksdb::init(&format!("{}/fabric", base)).await.map_err(Into::into)
 }
 
@@ -188,7 +188,10 @@ fn unpack_consensus_map(bin: &[u8]) -> Result<HashMap<[u8; 32], StoredConsensus>
 
 /// If DB has an attestation for entry_hash signed by a different trainer than current
 /// config::trainer_pk, then resign with current keys, update DB and return new attestation.
-pub fn get_or_resign_my_attestation(config: &crate::config::Config, entry_hash: &[u8; 32]) -> Result<Option<Attestation>, Error> {
+pub fn get_or_resign_my_attestation(
+    config: &crate::config::Config,
+    entry_hash: &[u8; 32],
+) -> Result<Option<Attestation>, Error> {
     let packed = rocksdb::get(CF_MY_ATTESTATION_FOR_ENTRY, entry_hash)?;
     let Some(bin) = packed else { return Ok(None) };
     let att = Attestation::from_etf_bin(&bin)?;
@@ -344,7 +347,7 @@ mod tests {
     async fn test_height_slot_indexing() {
         // initialize db for testing
         let test_path = format!("target/test_fabric_{}", std::process::id());
-        let _ = init(&test_path).await;
+        let _ = init_kvdb(&test_path).await;
 
         // create test entry data
         let entry_hash1: [u8; 32] = [1; 32];

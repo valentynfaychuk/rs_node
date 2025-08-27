@@ -1,4 +1,4 @@
-#[derive(thiserror::Error, Debug, strum_macros::IntoStaticStr)]
+#[derive(Debug, thiserror::Error, strum_macros::IntoStaticStr)]
 pub enum Error {
     #[error("message v2 is only {0} bytes")]
     WrongLength(usize),
@@ -52,7 +52,7 @@ impl crate::utils::misc::Typename for Error {
 /// 155-162 8       Timestamp           Nanosecond timestamp (big-endian)
 /// 163-166 4       Original Size       Size of original message (big-endian)
 /// 167+    N       Payload/Shard       Message data or Reed-Solomon shard
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MessageV2 {
     pub version: String,
     pub pk: [u8; 48],
@@ -67,8 +67,7 @@ pub struct MessageV2 {
 impl TryFrom<&[u8]> for MessageV2 {
     type Error = Error;
     fn try_from(bin: &[u8]) -> Result<Self, Self::Error> {
-        crate::metrics::METRICS.add_v2_udp_packet(bin.len());
-        Self::try_from_inner(bin).inspect_err(|e| crate::metrics::METRICS.add_error(e))
+        Self::try_from_inner(bin)
     }
 }
 

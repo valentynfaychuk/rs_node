@@ -1,17 +1,17 @@
 use crate::bic::sol;
 use crate::bic::sol::Solution;
-use crate::config;
 use crate::consensus::attestation::AttestationBulk;
 use crate::consensus::consensus::{get_chain_rooted_tip_entry, get_chain_tip_entry};
 use crate::consensus::entry::{Entry, EntrySummary};
 use crate::consensus::tx;
 use crate::consensus::{DST_NODE, attestation, entry};
-use crate::utils::misc::Typename;
-use crate::utils::reed_solomon::ReedSolomonResource;
-use crate::utils::misc::{TermExt, TermMap, get_unix_millis_now, get_unix_nanos_now};
-use crate::utils::{bls12_381 as bls, reed_solomon};
 use crate::node::msg_v2;
 use crate::node::msg_v2::MessageV2;
+use crate::utils::misc::Typename;
+use crate::utils::misc::{TermExt, TermMap, get_unix_millis_now, get_unix_nanos_now};
+use crate::utils::reed_solomon::ReedSolomonResource;
+use crate::utils::{bls12_381 as bls, reed_solomon};
+use crate::{Context, config};
 use eetf::convert::TryAsRef;
 use eetf::{Atom, Binary, DecodeError as EtfDecodeError, EncodeError as EtfEncodeError, List, Map, Term};
 use miniz_oxide::deflate::{CompressionLevel, compress_to_vec};
@@ -28,23 +28,15 @@ pub trait Protocol: Typename + Send + Sync {
     where
         Self: Sized;
     /// Handle a message returning instructions for upper layers
-    #[instrument(skip(self), fields(proto = %self.typename()), name = "Proto::handle")]
-    async fn handle(&self) -> Result<Instruction, Error> {
-        crate::metrics::METRICS.add_handled_proto_by_name(self.typename());
-        match self.handle_inner().await {
-            Ok(i) => Ok(i),
-            Err(e) => {
-                crate::metrics::METRICS.add_error(&e);
-                Err(e)
-            }
-        }
+    #[instrument(skip(self, ctx), fields(proto = %self.typename()), name = "Proto::handle")]
+    async fn handle(&self, ctx: &Context) -> Result<Instruction, Error> {
+        ctx.metrics.add_handled_proto_by_name(self.typename());
+        self.handle_inner().await.inspect_err(|e| ctx.metrics.add_error(e))
     }
     async fn handle_inner(&self) -> Result<Instruction, Error>;
-    /// Convert to ETF binary format
-    fn to_etf_bin(&self) -> Result<Vec<u8>, Error>; // TODO: must be separate for types (not in trait)
 }
 
-#[derive(thiserror::Error, Debug, strum_macros::IntoStaticStr)]
+#[derive(Debug, thiserror::Error, strum_macros::IntoStaticStr)]
 pub enum Error {
     #[error(transparent)]
     Io(#[from] IoError),
@@ -104,13 +96,9 @@ pub enum Instruction {
     SolicitEntry2,
 }
 
-/// Also does the validation
+/// Does proto parsing and validation
 #[instrument(skip(bin), name = "Proto::from_etf_validated")]
 pub fn from_etf_bin(bin: &[u8]) -> Result<Box<dyn Protocol>, Error> {
-    from_etf_bin_inner(bin).inspect_err(|e| crate::metrics::METRICS.add_error(e))
-}
-
-fn from_etf_bin_inner(bin: &[u8]) -> Result<Box<dyn Protocol>, Error> {
     let decompressed = decompress_to_vec(bin)?;
     let term = Term::decode(decompressed.as_slice())?;
     let map = term.get_term_map().ok_or(Error::BadEtf("map"))?;
@@ -222,10 +210,6 @@ impl Protocol for Ping {
     }
     async fn handle_inner(&self) -> Result<Instruction, Error> {
         Ok(Instruction::ReplyPong { ts_m: self.ts_m })
-    }
-
-    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
-        Ping::to_etf_bin(self)
     }
 }
 
@@ -426,8 +410,12 @@ impl Protocol for Pong {
         // TODO: update ETS-like peer table with latency now_ms - p.ts_m
         Ok(Instruction::Noop)
     }
+}
 
-    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+impl Pong {
+    pub const NAME: &'static str = "pong";
+
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
         let mut m = HashMap::new();
         m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
         m.insert(Term::Atom(Atom::from("ts_m")), Term::from(eetf::BigInteger { value: self.ts_m.into() }));
@@ -440,10 +428,6 @@ impl Protocol for Pong {
         let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
         Ok(compressed)
     }
-}
-
-impl Pong {
-    pub const NAME: &'static str = "pong";
 }
 
 impl Typename for TxPool {
@@ -464,8 +448,12 @@ impl Protocol for TxPool {
         // TODO: update ETS-like tx pool with valid_txs
         Ok(Instruction::Noop)
     }
+}
 
-    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+impl TxPool {
+    pub const NAME: &'static str = "txpool";
+
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
         // create list of transaction binaries
         let tx_terms: Vec<Term> = self.valid_txs.iter().map(|tx| Term::from(Binary { bytes: tx.clone() })).collect();
 
@@ -487,10 +475,6 @@ impl Protocol for TxPool {
         let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
         Ok(compressed)
     }
-}
-
-impl TxPool {
-    pub const NAME: &'static str = "txpool";
 
     fn get_valid_txs(txs_packed: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
         let term = Term::decode(txs_packed)?;
@@ -544,8 +528,12 @@ impl Protocol for Peers {
         // TODO: update ETS-like peer table with new IPs
         Ok(Instruction::Noop)
     }
+}
 
-    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+impl Peers {
+    pub const NAME: &'static str = "peers";
+
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
         // create list of IP strings
         let ip_terms: Vec<Term> =
             self.ips.iter().map(|ip| Term::from(Binary { bytes: ip.as_bytes().to_vec() })).collect();
@@ -562,10 +550,6 @@ impl Protocol for Peers {
         let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
         Ok(compressed)
     }
-}
-
-impl Peers {
-    pub const NAME: &'static str = "peers";
 }
 
 #[cfg(test)]

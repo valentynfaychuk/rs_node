@@ -24,7 +24,7 @@ pub enum Value {
     Map(BTreeMap<Value, Value>),
 }
 
-#[derive(thiserror::Error, Debug, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error("unexpected end of input")]
     UnexpectedEof,

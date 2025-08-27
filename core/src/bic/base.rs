@@ -258,7 +258,7 @@ fn execute_wasm_contract(
     };
 
     // Generate seed for randomness
-    let seed = seed_random(&env.entry_vr, &env.tx_hash, b"0", &env.call_counter.to_string().as_bytes());
+    let seed = seed_random(&env.entry_vr, &env.tx_hash, b"0", env.call_counter.to_string().as_bytes());
     let _seedf64 = seed_to_f64(&seed);
 
     // Handle attachments (if present)

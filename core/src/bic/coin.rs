@@ -57,7 +57,7 @@ pub fn burn_balance(symbol: &str) -> u64 {
     balance(&BURN_ADDRESS, symbol)
 }
 
-#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum CoinError {
     #[error("invalid receiver pk")]
     InvalidReceiverPk,

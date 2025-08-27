@@ -1,6 +1,7 @@
 target/
 .idea/
 
+.config
 *.local
 .env
 **/.env

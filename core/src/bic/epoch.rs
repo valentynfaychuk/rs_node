@@ -6,7 +6,7 @@ use crate::bic::coin;
 use crate::bic::sol;
 use crate::bic::sol::Solution;
 
-#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum EpochError {
     #[error("invalid sol: already exists in bloom or failed verification")]
     InvalidSol,

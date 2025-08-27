@@ -1,28 +1,25 @@
-use crate::consensus::DST_NODE;
-use crate::utils::misc::get_unix_nanos_now;
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-// does not poison mutex on panic
-
 use super::msg_v2::MessageV2;
+use crate::consensus::DST_NODE;
+use crate::node::msg_v2;
+use crate::utils::misc::get_unix_nanos_now;
 use crate::utils::reed_solomon;
 use crate::utils::reed_solomon::ReedSolomonResource;
 use crate::utils::{blake3, bls12_381};
-
-type ReassemblySyncMap = Arc<Mutex<HashMap<ReassemblyKey, EntryState>>>;
+use scc::HashMap as SccHashMap;
+use std::hash::{Hash, Hasher};
 
 pub struct ReedSolomonReassembler {
-    reorg: ReassemblySyncMap,
+    reorg: SccHashMap<ReassemblyKey, EntryState>,
 }
 
-#[derive(thiserror::Error, Debug, strum_macros::IntoStaticStr)]
+#[derive(Debug, thiserror::Error, strum_macros::IntoStaticStr)]
 pub enum Error {
     #[error(transparent)]
     ReedSolomon(#[from] reed_solomon::Error),
     #[error(transparent)]
     Bls(#[from] bls12_381::Error),
+    #[error(transparent)]
+    MessageV2(#[from] msg_v2::Error),
     #[error("message has no signature")]
     NoSignature,
 }
@@ -62,7 +59,7 @@ impl Hash for ReassemblyKey {
 
 #[derive(Debug)]
 enum EntryState {
-    Collecting(HashMap<u16, Vec<u8>>), // shard_index -> shard bytes
+    Collecting(std::collections::HashMap<u16, Vec<u8>>), // shard_index -> shard bytes
     Spent,
 }
 
@@ -74,16 +71,15 @@ impl Default for ReedSolomonReassembler {
 
 impl ReedSolomonReassembler {
     pub fn new() -> Self {
-        Self { reorg: Arc::new(Mutex::new(HashMap::new())) }
+        Self { reorg: SccHashMap::new() }
     }
 
-    /// Create signed MessageV2 shards from payload, implementing symmetric sharding to add_shard.
-    ///
-    /// Reference: node.local/ex encrypt_message_v2 logic:
-    /// - Small messages (< 1300 bytes): single shard with shard_total=1  
-    /// - Large messages: Reed-Solomon encode with data_shards = parity_shards = (total_bytes + 1023) / 1024
-    /// - Sign Blake3(pk || original_payload) once, use same signature for all shards
-    pub fn build_shards(config: &crate::config::Config, payload: Vec<u8>, version: &str) -> Result<Vec<MessageV2>, Error> {
+    /// Creates signed MessageV2 shards from payload
+    pub fn build_shards(
+        config: &crate::config::Config,
+        payload: Vec<u8>,
+        version: &str,
+    ) -> Result<Vec<Vec<u8>>, Error> {
         let pk = config.get_pk();
         let trainer_sk = config.get_sk();
         let ts_nano = get_unix_nanos_now() as u64;
@@ -98,16 +94,19 @@ impl ReedSolomonReassembler {
 
         // reference: if byte_size(msg_compressed) < 1300, single shard
         if payload.len() < 1300 {
-            return Ok(vec![MessageV2 {
-                version: version.to_string(),
-                pk,
-                signature,
-                shard_index: 0,
-                shard_total: 1,
-                ts_nano,
-                original_size,
-                payload,
-            }]);
+            return Ok(vec![
+                MessageV2 {
+                    version: version.to_string(),
+                    pk,
+                    signature,
+                    shard_index: 0,
+                    shard_total: 1,
+                    ts_nano,
+                    original_size,
+                    payload,
+                }
+                .try_into()?,
+            ]);
         }
 
         // large message: Reed-Solomon sharding
@@ -124,100 +123,96 @@ impl ReedSolomonReassembler {
         let shards_to_send = data_shards + 1 + (data_shards / 4);
         let limited_shards: Vec<_> = encoded_shards.into_iter().take(shards_to_send).collect();
 
-        let mut messages = Vec::new();
+        let mut shards = Vec::new();
         for (shard_index, shard_payload) in limited_shards {
-            messages.push(MessageV2 {
-                version: version.to_string(),
-                pk,
-                signature,
-                shard_index: shard_index as u16,
-                shard_total: total_shards,
-                ts_nano,
-                original_size,
-                payload: shard_payload,
-            });
+            shards.push(
+                MessageV2 {
+                    version: version.to_string(),
+                    pk,
+                    signature,
+                    shard_index: shard_index as u16,
+                    shard_total: total_shards,
+                    ts_nano,
+                    original_size,
+                    payload: shard_payload,
+                }
+                .try_into()?,
+            );
         }
 
-        Ok(messages)
+        Ok(shards)
     }
 
-    /// This starts a timer that clears outdated reassemblies
-    pub fn start_periodic_cleanup(&self) {
-        tokio::spawn(Self::periodic_cleanup(self.reorg.clone()));
-    }
+    pub fn clear_stale(&self, seconds: u64) {
+        let threshold = get_unix_nanos_now().saturating_sub(seconds as u128 * 1_000_000_000);
+        let size_before = self.reorg.len();
 
-    async fn periodic_cleanup(reorg: ReassemblySyncMap) -> ! {
-        use tokio::time::{Duration, interval};
-        let mut int = interval(Duration::from_secs(8));
-        loop {
-            int.tick().await;
-            Self::clear_stale(reorg.clone()).await;
+        // use retain to efficiently remove stale entries
+        self.reorg.retain(|k, _v| (k.ts_nano as u128) > threshold);
+
+        let size_after = self.reorg.len();
+        if size_before > size_after {
+            println!("cleared {}", size_before - size_after);
         }
     }
 
-    async fn clear_stale(reorg: ReassemblySyncMap) {
-        let threshold = get_unix_nanos_now().saturating_sub(8_000_000_000u128);
-        let mut reorg = reorg.lock().await;
-        let size_before = reorg.len();
-        reorg.retain(|k, _| (k.ts_nano as u128) > threshold);
-        println!("cleared {}", size_before - reorg.len());
-    }
-
-    pub async fn add_shard(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
-        self.add_shard_inner(message).await.inspect_err(|e| crate::metrics::METRICS.add_error(e))
-    }
-
-    // adds a shard to the reassembly buffer
-    // when enough shards collected, reconstructs
-    pub async fn add_shard_inner(&self, message: &MessageV2) -> Result<Option<Vec<u8>>, Error> {
-        let key = ReassemblyKey::from(message);
+    /// Adds a shard to the reassembly buffer, and when enough
+    /// shards collected, reconstructs
+    pub fn add_shard(&self, bin: &[u8]) -> Result<Option<Vec<u8>>, Error> {
+        let message = MessageV2::try_from(bin)?;
+        let key = ReassemblyKey::from(&message);
         let shard = &message.payload;
 
         // some messages are single-shard only, so we can skip the reorg logic
         if key.shard_total == 1 {
-            Self::verify_msg_sig(&key, &message.signature, message.payload.as_slice())?;
+            Self::verify_msg_sig(&key, &message.signature, &message.payload)?;
             return Ok(Some(message.payload.clone()));
         }
 
         let data_shards = (key.shard_total / 2) as usize;
-        let parity_shards = data_shards;
 
-        let mut reorg = self.reorg.lock().await;
-        match reorg.get_mut(&key) {
-            None => {
-                let mut m = HashMap::new();
-                m.insert(message.shard_index, shard.clone());
-                reorg.insert(key, EntryState::Collecting(m));
-            }
-            Some(EntryState::Spent) => {
-                // do nothing
-            }
-            Some(EntryState::Collecting(m)) => {
-                // if we still have fewer than data_shards-1 before adding this shard, keep collecting
-                if m.len() < data_shards.saturating_sub(1) {
-                    m.insert(message.shard_index, shard.clone());
-                    return Ok(None);
+        // try insert first (for new keys)
+        let mut new_state = std::collections::HashMap::new();
+        new_state.insert(message.shard_index, shard.clone());
+        match self.reorg.insert(key.clone(), EntryState::Collecting(new_state)) {
+            Ok(_) => {} // successfully inserted new key
+            Err((key, _)) => {
+                // key already exists, try to update it
+                let result = self.reorg.update(&key, |_k, v| {
+                    match v {
+                        EntryState::Spent => {
+                            None // don't change, return None to indicate no action
+                        }
+                        EntryState::Collecting(map) => {
+                            map.insert(message.shard_index, shard.clone());
+
+                            if map.len() >= data_shards {
+                                // collect all shards for reassembly
+                                let shards: Vec<(usize, Vec<u8>)> =
+                                    map.iter().map(|(idx, bytes)| (*idx as usize, bytes.clone())).collect();
+                                Some(shards)
+                            } else {
+                                None // still collecting
+                            }
+                        }
+                    }
+                });
+
+                if let Some(Some(shards)) = result {
+                    // mark as spent in a separate operation
+                    let _ = self.reorg.update(&key, |_k, v| *v = EntryState::Spent);
+
+                    // now decode
+                    let msg_size = message.original_size as usize;
+                    let mut rs_res = ReedSolomonResource::new(data_shards, data_shards)?;
+                    let payload = rs_res.decode_shards(shards, data_shards + data_shards, msg_size)?;
+
+                    Self::verify_msg_sig(&key, &message.signature, payload.as_slice())?;
+                    return Ok(Some(payload));
                 }
-                // otherwise, we can attempt reassembly with existing m + this shard
-                // build shard list first (while borrow is active), then drop borrow before mutating self.reorg
-                let shards: Vec<(usize, Vec<u8>)> = {
-                    let mut v: Vec<(usize, Vec<u8>)> =
-                        m.iter().map(|(idx, bytes)| (*idx as usize, bytes.clone())).collect();
-                    v.push((message.shard_index as usize, shard.clone()));
-                    v
-                };
-
-                // now mark as spent
-                reorg.insert(key.clone(), EntryState::Spent);
-
-                let msg_size = message.original_size as usize;
-                let mut rs_res = ReedSolomonResource::new(data_shards, parity_shards)?;
-                let payload = rs_res.decode_shards(shards, data_shards + parity_shards, msg_size)?;
-
-                Self::verify_msg_sig(&key, &message.signature, payload.as_slice())?;
-                return Ok(Some(payload));
             }
         }
+
         Ok(None)
     }
 
@@ -316,7 +311,7 @@ mod tests {
     async fn test_message_v2_roundtrip_small() {
         // test small message (single shard)
         let payload = b"hello world".to_vec();
-        let version = "test";
+        let version = "1.0.0";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert_eq!(messages.len(), 1);
@@ -324,7 +319,8 @@ mod tests {
         assert_eq!(messages[0].payload, payload);
 
         let reassembler = ReedSolomonReassembler::new();
-        let result = reassembler.add_shard(&messages[0]).await.unwrap();
+        let msg_bytes: Vec<u8> = messages[0].clone().try_into().unwrap();
+        let result = reassembler.add_shard(&msg_bytes).unwrap();
         assert_eq!(result, Some(payload));
     }
 
@@ -332,7 +328,7 @@ mod tests {
     async fn test_message_v2_roundtrip_large() {
         // test large message (multiple shards)
         let payload = vec![42u8; 3000]; // larger than 1300 bytes
-        let version = "test";
+        let version = "1.0.0";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert!(messages.len() > 1);
@@ -353,7 +349,8 @@ mod tests {
 
         // add shards one by one
         for msg in &messages {
-            if let Some(restored) = reassembler.add_shard(msg).await.unwrap() {
+            let msg_bytes: Vec<u8> = msg.clone().try_into().unwrap();
+            if let Some(restored) = reassembler.add_shard(&msg_bytes).unwrap() {
                 result = Some(restored);
                 break;
             }
@@ -366,7 +363,7 @@ mod tests {
     async fn test_message_v2_partial_shards() {
         // test that we can recover with missing shards
         let payload = vec![123u8; 4000];
-        let version = "test";
+        let version = "1.0.0";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert!(messages.len() > 2);
@@ -380,7 +377,8 @@ mod tests {
         // take first data_shards worth of messages to ensure we can recover
         let mut restored = None;
         for (_i, msg) in messages.iter().enumerate().take(data_shards + 1) {
-            if let Some(result) = reassembler.add_shard(msg).await.unwrap() {
+            let msg_bytes: Vec<u8> = msg.clone().try_into().unwrap();
+            if let Some(result) = reassembler.add_shard(&msg_bytes).unwrap() {
                 restored = Some(result);
                 break;
             }

@@ -6,7 +6,7 @@ use crate::utils::{bls12_381 as bls, rocksdb};
 use eetf::{Atom, Binary, Term};
 use std::collections::HashMap;
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("wrong type: {0}")]
     WrongType(&'static str),

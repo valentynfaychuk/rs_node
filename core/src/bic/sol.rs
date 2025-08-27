@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Mutex;
 
-#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum Error {
     #[error("invalid sol seed size")]
     InvalidSolSeedSize,
@@ -78,8 +78,12 @@ impl Protocol for Solution {
         // cache the solution
         Ok(protocol::Instruction::Noop)
     }
+}
 
-    fn to_etf_bin(&self) -> Result<Vec<u8>, protocol::Error> {
+impl Solution {
+    pub const NAME: &'static str = "sol";
+
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, protocol::Error> {
         // convert solution back to binary format
         let sol_bin = match self {
             Solution::V2(v2) => {
@@ -125,10 +129,6 @@ impl Protocol for Solution {
         term.encode(&mut out).map_err(protocol::Error::EtfEncode)?;
         Ok(out)
     }
-}
-
-impl Solution {
-    pub const NAME: &'static str = "sol";
 
     pub fn from_etf_validated(bin: &[u8]) -> Result<Self, Error> {
         if Self::validate(bin)? { Self::unpack(bin) } else { Err(Error::InvalidSolSeedSize) }

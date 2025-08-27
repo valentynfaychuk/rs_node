@@ -5,9 +5,8 @@ use crate::consensus::entry::{Entry, EntryHeader};
 /// This module exposes static genesis values (signer, PoP, attestation, entry)
 /// and provides a deterministic builder + signer for the genesis entry.
 /// Some Elixir dependencies (BIC.Base.call_exit) are not implemented in Rust yet; see generate().
-use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("missing environment var: {0}")]
     MissingEnv(&'static str),

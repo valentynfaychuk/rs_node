@@ -1,6 +1,5 @@
 use crate::utils::misc::{Typename, get_unix_secs_now};
-use once_cell::sync::Lazy;
-use scc::HashIndex;
+use scc::HashIndex as SccHashIndex;
 use scc::ebr::Guard;
 use serde_json::Value;
 use std::collections::HashMap as StdHashMap;
@@ -9,27 +8,25 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::warn;
 
-pub static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
-
 pub struct Metrics {
     // Total packets counter
     incoming_bytes: AtomicU64,   // Total bytes received
     incoming_packets: AtomicU64, // Total UDP packets received
 
     // Handled protocol message counters by name (dynamic)
-    handled_protos: HashIndex<String, Arc<AtomicU64>>,
+    handled_protos: SccHashIndex<String, Arc<AtomicU64>>,
 
     // Error counters by type name (dynamic)
-    errors: HashIndex<String, Arc<AtomicU64>>,
+    errors: SccHashIndex<String, Arc<AtomicU64>>,
 
     // Start time for uptime calculation
     start_time: u64,
 }
 
 impl Metrics {
-    fn new() -> Self {
-        let handled_protos = HashIndex::new();
-        let errors = HashIndex::new();
+    pub fn new() -> Self {
+        let handled_protos = SccHashIndex::new();
+        let errors = SccHashIndex::new();
         Self {
             incoming_bytes: AtomicU64::new(0),
             incoming_packets: AtomicU64::new(0),
@@ -43,7 +40,7 @@ impl Metrics {
     pub fn add_handled_proto_by_name(&self, proto_name: &str) {
         // correct way of handling ownership in scc HashIndex
         let pn_owned = proto_name.to_string();
-        if let Some(counter) = METRICS.handled_protos.get(&pn_owned) {
+        if let Some(counter) = self.handled_protos.get(&pn_owned) {
             counter.fetch_add(1, Ordering::Relaxed);
         } else {
             let _ = self.handled_protos.insert(pn_owned, Arc::new(AtomicU64::new(1)));
@@ -68,7 +65,7 @@ impl Metrics {
         if let Some(counter) = self.errors.get(&et_owned) {
             counter.fetch_add(1, Ordering::Relaxed);
         } else {
-            let _ = METRICS.errors.insert(et_owned, Arc::new(AtomicU64::new(1)));
+            let _ = self.errors.insert(et_owned, Arc::new(AtomicU64::new(1)));
         }
     }
 
@@ -117,7 +114,7 @@ impl Metrics {
             });
         }
 
-        let seconds = uptime_seconds - lus;
+        let seconds = if uptime_seconds != lus { uptime_seconds - lus } else { 1 };
         let packets = incoming_packets - lip;
         let bytes = incoming_bytes - lib;
 
@@ -169,13 +166,91 @@ amadeus_uptime_seconds {}"#,
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn test_prometheus_format() {
-        let metrics_str = METRICS.get_prometheus();
-        assert!(metrics_str.contains("# HELP amadeus_protocol_messages_total"));
-        assert!(metrics_str.contains("# TYPE amadeus_protocol_messages_total counter"));
+    fn udp_packet_totals_are_tracked() {
+        let m = Metrics::new();
+        m.add_v2_udp_packet(100);
+        m.add_v2_udp_packet(250);
+        let j = m.get_json();
+        let packets = j.get("packets").expect("packets").as_object().unwrap();
+        assert_eq!(
+            packets
+                .get("total_incoming_packets")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            packets
+                .get("total_incoming_bytes")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            350
+        );
+    }
+
+    #[test]
+    fn protocol_counters_and_prometheus_include_counts() {
+        let m = Metrics::new();
+        m.add_handled_proto_by_name("ping");
+        m.add_handled_proto_by_name("ping");
+        m.add_handled_proto_by_name("peers");
+
+        let j = m.get_json();
+        let protos = j.get("handled_protos").unwrap().as_object().unwrap();
+        assert_eq!(protos.get("ping").unwrap().as_u64().unwrap(), 2);
+        assert_eq!(protos.get("peers").unwrap().as_u64().unwrap(), 1);
+
+        let prom = m.get_prometheus();
+        assert!(prom.contains("amadeus_protocol_messages_total{type=\"ping\"} 2"));
+        assert!(prom.contains("amadeus_protocol_messages_total{type=\"peers\"} 1"));
+    }
+
+    #[derive(Debug)]
+    struct DummyErr;
+    impl crate::utils::misc::Typename for DummyErr {
+        fn typename(&self) -> &'static str {
+            "dummy"
+        }
+    }
+
+    #[test]
+    fn error_counters_by_typename_and_prometheus() {
+        let m = Metrics::new();
+        let e = DummyErr;
+        m.add_error(&e);
+        m.add_error(&e);
+
+        let j = m.get_json();
+        let errs = j.get("errors").unwrap().as_object().unwrap();
+        assert_eq!(errs.get("dummy").unwrap().as_u64().unwrap(), 2);
+
+        let prom = m.get_prometheus();
+        assert!(prom.contains("amadeus_packet_errors_total{type=\"dummy\"} 2"));
+    }
+
+    #[test]
+    fn uptime_is_nonnegative_and_present() {
+        let m = Metrics::new();
+        let j = m.get_json();
+        let uptime_val = j.get("uptime").unwrap();
+        assert!(uptime_val.is_u64());
+    }
+
+    #[test]
+    fn prometheus_packet_totals_reflect_counters() {
+        let m = Metrics::new();
+        m.add_v2_udp_packet(10);
+        m.add_v2_udp_packet(20);
+        let prom = m.get_prometheus();
+        assert!(prom.contains("amadeus_udp_packets_total 2"));
+        assert!(prom.contains("amadeus_bytes_total 30"));
     }
 }

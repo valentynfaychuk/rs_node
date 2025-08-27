@@ -81,8 +81,12 @@ impl Protocol for AttestationBulk {
         // TODO: handle the attestation bulk
         Ok(protocol::Instruction::Noop)
     }
+}
 
-    fn to_etf_bin(&self) -> Result<Vec<u8>, protocol::Error> {
+impl AttestationBulk {
+    pub const NAME: &'static str = "attestation_bulk";
+
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, protocol::Error> {
         // create list of attestation binaries
         let attestation_terms: Result<Vec<Term>, Error> =
             self.attestations.iter().map(|att| att.to_etf_bin().map(|bin| Term::from(Binary { bytes: bin }))).collect();
@@ -103,10 +107,6 @@ impl Protocol for AttestationBulk {
         term.encode(&mut out).map_err(protocol::Error::EtfEncode)?;
         Ok(out)
     }
-}
-
-impl AttestationBulk {
-    pub const NAME: &'static str = "attestation_bulk";
 }
 
 impl Attestation {

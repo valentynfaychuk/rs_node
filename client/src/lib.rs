@@ -2,7 +2,7 @@ mod dump_replay;
 
 use ama_core::config::Config;
 use ama_core::node::ReedSolomonReassembler;
-use ama_core::node::protocol::{Protocol, TxPool};
+use ama_core::node::protocol::TxPool;
 pub use dump_replay::DumpReplaySocket;
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
@@ -20,8 +20,6 @@ pub fn init_tracing() {
 
 pub async fn get_ama_config() -> Config {
     let root = std::env::var("ROOT").unwrap_or_else(|_| "run.local".into());
-
-    // Check for AMA_SK environment variable first
     if let Ok(sk_b58) = std::env::var("SK") {
         match bs58::decode(sk_b58.trim()).into_vec() {
             Ok(bytes) => {
@@ -33,13 +31,15 @@ pub async fn get_ama_config() -> Config {
         }
     }
 
-    // If no valid AMA_SK env var, generate new config
     Config::generate_new(Some(root.into())).await
 }
 
-/// Get UDP address from environment variable or default
-pub fn get_udp_addr() -> SocketAddr {
+pub fn get_peer_addr() -> SocketAddr {
     std::env::var("UDP_ADDR").unwrap_or_else(|_| "127.0.0.1:36969".to_string()).parse().expect("valid UDP_ADDR")
+}
+
+pub fn get_dashboard_port() -> u16 {
+    std::env::var("HTTP_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(3000)
 }
 
 /// Send transaction to network via UDP, replicating Elixir reference behavior
@@ -60,7 +60,7 @@ pub async fn send_transaction(config: &Config, tx_packed: Vec<u8>) -> Result<(),
     let message_shards = ReedSolomonReassembler::build_shards(config, compressed_msg, "1.1.1")?;
 
     // Send each shard via UDP
-    let addr = get_udp_addr();
+    let addr = get_peer_addr();
     let socket = UdpSocket::bind("0.0.0.0:0").await?; // Bind to any available port
     let shard_count = message_shards.len();
 

@@ -19,7 +19,7 @@ use std::sync::RwLock;
 /// - Index fields stored for ETS-style secondary indexes
 /// - Merge semantics are top-level (like Elixir Map.merge/2): for Map values, new keys override existing ones;
 ///   nested maps are not merged recursively.
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("MnesiaKV not loaded. Call load() first")]
     NotLoaded,

@@ -4,7 +4,7 @@ use rocksdb::{
 };
 use tokio::fs::create_dir_all;
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     RocksDb(#[from] rocksdb::Error),

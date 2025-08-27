@@ -1,10 +1,10 @@
 [package]
-name = "plot"
+name = "dashboard"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "plot"
+name = "dashboard"
 path = "src/lib.rs"
 crate-type = ["rlib"]
 
@@ -17,4 +17,5 @@ tokio-stream = "0.1"
 async-stream = "0.3"
 futures-core = "0.3"
 anyhow = "1.0.98"
+tower-http = { version = "0.6", features = ["fs"] }
 ama_core = { path = "../core" }

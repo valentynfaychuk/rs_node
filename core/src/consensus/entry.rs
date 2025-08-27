@@ -3,11 +3,11 @@ use super::agg_sig::{DST_ENTRY, DST_VRF};
 use crate::config::ENTRY_SIZE;
 use crate::consensus::tx::TxU;
 use crate::consensus::{fabric, tx};
+use crate::node::protocol;
+use crate::node::protocol::Protocol;
 use crate::utils::bls12_381;
 use crate::utils::misc::{TermExt, TermMap, bitvec_to_bools, bools_to_bitvec, get_unix_millis_now};
 use crate::utils::{archiver, blake3};
-use crate::node::protocol;
-use crate::node::protocol::Protocol;
 use crate::{bic, consensus};
 use eetf::{Atom, BigInteger, Binary, Map, Term};
 use std::collections::HashMap;
@@ -18,6 +18,8 @@ const MAX_TXS: usize = 100; // maximum number of transactions in an entry
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     #[error(transparent)]
     EtfDecode(#[from] eetf::DecodeError),
     #[error(transparent)]
@@ -43,9 +45,7 @@ pub enum Error {
     #[error(transparent)]
     Archiver(#[from] archiver::Error),
     #[error(transparent)]
-    RocksDb(#[from] rocksdb::Error),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
+    RocksDb(#[from] crate::utils::rocksdb::Error),
 }
 
 /// Shared summary of an entry’s tip.
@@ -187,7 +187,6 @@ impl crate::utils::misc::Typename for Entry {
 
 #[async_trait::async_trait]
 impl Protocol for Entry {
-
     fn from_etf_map_validated(map: TermMap) -> Result<Self, protocol::Error> {
         let bin = map.get_binary("entry_packed").ok_or(Error::BadEtf("entry_packed"))?;
         Entry::from_etf_bin_validated(bin, ENTRY_SIZE).map_err(Into::into)
@@ -195,20 +194,6 @@ impl Protocol for Entry {
 
     async fn handle_inner(&self) -> Result<protocol::Instruction, protocol::Error> {
         self.handle_inner().await.map_err(Into::into)
-    }
-
-    fn to_etf_bin(&self) -> Result<Vec<u8>, protocol::Error> {
-        // encode entry as bincode first
-        let entry_bin: Vec<u8> = self.clone().try_into().map_err(|_| protocol::Error::BadEtf("entry"))?;
-
-        let mut m = HashMap::new();
-        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
-        m.insert(Term::Atom(Atom::from("entry_packed")), Term::from(Binary { bytes: entry_bin }));
-
-        let term = Term::from(Map { map: m });
-        let mut out = Vec::new();
-        term.encode(&mut out).map_err(protocol::Error::EtfEncode)?;
-        Ok(out)
     }
 }
 
@@ -225,6 +210,20 @@ impl fmt::Debug for Entry {
 
 impl Entry {
     pub const NAME: &'static str = "entry";
+
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, protocol::Error> {
+        // encode entry as bincode first
+        let entry_bin: Vec<u8> = self.clone().try_into().map_err(|_| protocol::Error::BadEtf("entry"))?;
+
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("entry_packed")), Term::from(Binary { bytes: entry_bin }));
+
+        let term = Term::from(Map { map: m });
+        let mut out = Vec::new();
+        term.encode(&mut out).map_err(protocol::Error::EtfEncode)?;
+        Ok(out)
+    }
 
     async fn handle_inner(&self) -> Result<protocol::Instruction, Error> {
         let height = self.header.height;
