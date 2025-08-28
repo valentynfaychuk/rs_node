@@ -1,10 +1,39 @@
 use crate::utils::bls12_381::{sign, verify};
+use crate::utils::misc::{get_unix_millis_now, get_unix_secs_now};
+use eetf::{Atom, Binary, FixInteger, Map, Term};
 use once_cell::sync::Lazy;
 use scc::HashMap;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Debug, thiserror::Error, strum_macros::IntoStaticStr)]
+pub enum Error {
+    #[error("Failed to sign ANR: {0}")]
+    SigningError(String),
+    #[error("Failed to serialize ANR: {0}")]
+    SerializationError(String),
+    #[error("Invalid timestamp: ANR is from the future")]
+    InvalidTimestamp,
+    #[error("ANR too large: {0} bytes (max 390)")]
+    TooLarge(usize),
+    #[error("Invalid signature")]
+    InvalidSignature,
+    #[error("Invalid port: {0} (expected 36969)")]
+    InvalidPort(u16),
+    #[error("Storage error: {0}")]
+    StorageError(String),
+    #[error("BLS error: {0}")]
+    BlsError(#[from] crate::utils::bls12_381::Error),
+    #[error("EETF encoding error: {0}")]
+    EetfError(#[from] eetf::EncodeError),
+}
+
+impl crate::utils::misc::Typename for Error {
+    fn typename(&self) -> &'static str {
+        self.into()
+    }
+}
 
 // global in-memory storage for anrs
 static ANR_STORE: Lazy<Arc<HashMap<Vec<u8>, ANR>>> = Lazy::new(|| Arc::new(HashMap::new()));
@@ -23,7 +52,7 @@ pub struct ANR {
     #[serde(skip)]
     pub handshaked: bool,
     #[serde(skip)]
-    pub has_chain_pop: bool,
+    pub hasChainPop: bool,
     #[serde(skip)]
     pub error: Option<String>,
     #[serde(skip)]
@@ -34,8 +63,9 @@ pub struct ANR {
 
 impl ANR {
     // build a new anr with signature
-    pub fn build(sk: &[u8], pk: Vec<u8>, pop: Vec<u8>, ip4: Ipv4Addr, version: String) -> Result<Self, String> {
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
+    pub fn build(sk: &[u8], pk: Vec<u8>, pop: Vec<u8>, ip4: Ipv4Addr, version: String) -> Result<Self, Error> {
+        // use seconds like elixir :os.system_time(1)
+        let ts = get_unix_secs_now();
 
         let mut anr = ANR {
             ip4,
@@ -46,42 +76,43 @@ impl ANR {
             version,
             signature: vec![],
             handshaked: false,
-            has_chain_pop: false,
+            hasChainPop: false,
             error: None,
             error_tries: 0,
             next_check: ts + 3,
         };
 
-        // create signature over deterministic encoding of fields
-        let to_sign = anr.to_binary_for_signing()?;
+        // create signature over erlang term format like elixir
+        let to_sign = anr.to_erlang_term_for_signing()?;
         let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_ANR";
-        let sig_array = sign(sk, &to_sign, dst).map_err(|e| e.to_string())?;
+        let sig_array = sign(sk, &to_sign, dst)?;
         anr.signature = sig_array.to_vec();
 
         Ok(anr)
     }
 
-    // convert to binary for signing (excludes signature field)
-    // uses bincode for deterministic serialization
-    fn to_binary_for_signing(&self) -> Result<Vec<u8>, String> {
-        // create a map with fields in same order as elixir
-        // we'll use bincode to serialize deterministically
-        let signing_data = SigningData {
-            ip4: self.ip4,
-            pk: self.pk.clone(),
-            pop: self.pop.clone(),
-            port: self.port,
-            ts: self.ts,
-            version: self.version.clone(),
-        };
+    // convert to erlang term format for signing (excludes signature field)
+    // matches elixir :erlang.term_to_binary([:deterministic])
+    fn to_erlang_term_for_signing(&self) -> Result<Vec<u8>, Error> {
+        // create map with fields in same order as elixir: [:ip4, :pk, :pop, :port, :ts, :version]
+        let map = Map::from([
+            (Term::Atom(Atom::from("ip4")), Term::Binary(Binary::from(self.ip4.octets().to_vec()))),
+            (Term::Atom(Atom::from("pk")), Term::Binary(Binary::from(self.pk.clone()))),
+            (Term::Atom(Atom::from("pop")), Term::Binary(Binary::from(self.pop.clone()))),
+            (Term::Atom(Atom::from("port")), Term::FixInteger(FixInteger::from(self.port as i32))),
+            (Term::Atom(Atom::from("ts")), Term::FixInteger(FixInteger::from(self.ts as i32))),
+            (Term::Atom(Atom::from("version")), Term::Binary(Binary::from(self.version.as_bytes().to_vec()))),
+        ]);
 
-        bincode::encode_to_vec(&signing_data, bincode::config::standard())
-            .map_err(|e| format!("Failed to serialize for signing: {}", e))
+        let term = Term::Map(map);
+        let mut buf = Vec::new();
+        term.encode(&mut buf)?;
+        Ok(buf)
     }
 
     // verify anr signature and proof of possession
     pub fn verify_signature(&self) -> bool {
-        if let Ok(to_sign) = self.to_binary_for_signing() {
+        if let Ok(to_sign) = self.to_erlang_term_for_signing() {
             let dst_anr = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_ANR";
             let dst_pop = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
@@ -98,28 +129,71 @@ impl ANR {
     }
 
     // verify and unpack anr from untrusted source
-    pub fn verify_and_unpack(anr: ANR) -> Option<ANR> {
+    pub fn verify_and_unpack(anr: ANR) -> Result<ANR, Error> {
         // check not wound into future (10 min tolerance)
-        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis() as u64;
+        // elixir uses :os.system_time(1000) for milliseconds
+        let now_ms = get_unix_millis_now() as u64;
 
-        let delta_ms = (now_ms as i64) - (anr.ts as i64 * 1000);
+        let delta_ms = (now_ms as i64) - (anr.ts as i64 * 1000); // convert ts from seconds to ms
         let min10_ms = 60 * 10 * 1000;
         if delta_ms < -(min10_ms as i64) {
-            return None;
+            return Err(Error::InvalidTimestamp);
         }
 
-        // check size limit (390 bytes in elixir)
-        let serialized = bincode::encode_to_vec(&anr, bincode::config::standard()).ok()?;
+        // check size limit (390 bytes in elixir) using erlang term format
+        let packed_anr = anr.pack();
+        let serialized = packed_anr.to_erlang_term_binary()?;
         if serialized.len() > 390 {
-            return None;
+            return Err(Error::TooLarge(serialized.len()));
         }
 
         // verify signature
         if !anr.verify_signature() {
-            return None;
+            return Err(Error::InvalidSignature);
         }
 
-        Some(anr)
+        Ok(packed_anr)
+    }
+
+    // convert full anr to erlang term format for size validation
+    // matches elixir :erlang.term_to_binary(anr, [:deterministic])
+    fn to_erlang_term_binary(&self) -> Result<Vec<u8>, Error> {
+        let map = Map::from([
+            (Term::Atom(Atom::from("ip4")), Term::Binary(Binary::from(self.ip4.octets().to_vec()))),
+            (Term::Atom(Atom::from("pk")), Term::Binary(Binary::from(self.pk.clone()))),
+            (Term::Atom(Atom::from("pop")), Term::Binary(Binary::from(self.pop.clone()))),
+            (Term::Atom(Atom::from("port")), Term::FixInteger(FixInteger::from(self.port as i32))),
+            (Term::Atom(Atom::from("signature")), Term::Binary(Binary::from(self.signature.clone()))),
+            (Term::Atom(Atom::from("ts")), Term::FixInteger(FixInteger::from(self.ts as i32))),
+            (Term::Atom(Atom::from("version")), Term::Binary(Binary::from(self.version.as_bytes().to_vec()))),
+        ]);
+
+        let term = Term::Map(map);
+        let mut buf = Vec::new();
+        term.encode(&mut buf)?;
+        Ok(buf)
+    }
+
+    // unpack anr with port validation like elixir
+    pub fn unpack(anr: ANR) -> Result<ANR, Error> {
+        if anr.port == 36969 {
+            Ok(ANR {
+                ip4: anr.ip4,
+                pk: anr.pk,
+                pop: anr.pop,
+                port: anr.port,
+                signature: anr.signature,
+                ts: anr.ts,
+                version: anr.version,
+                handshaked: false,
+                hasChainPop: false,
+                error: None,
+                error_tries: 0,
+                next_check: 0,
+            })
+        } else {
+            Err(Error::InvalidPort(anr.port))
+        }
     }
 
     // pack anr for network transmission
@@ -133,7 +207,7 @@ impl ANR {
             ts: self.ts,
             version: self.version.clone(),
             handshaked: false,
-            has_chain_pop: false,
+            hasChainPop: false,
             error: None,
             error_tries: 0,
             next_check: 0,
@@ -141,65 +215,57 @@ impl ANR {
     }
 }
 
-// helper struct for deterministic signing serialization
-#[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-struct SigningData {
-    ip4: Ipv4Addr,
-    pk: Vec<u8>,
-    pop: Vec<u8>,
-    port: u16,
-    ts: u64,
-    version: String,
-}
-
 // storage functions using scc hashmap
 
 // insert or update anr
-pub fn insert(anr: ANR) -> Result<(), String> {
+pub fn insert(anr: ANR) -> Result<(), Error> {
     // check if we have chain pop for this pk (would need consensus module)
-    // let has_chain_pop = consensus::chain_pop(&anr.pk).is_some();
+    // let hasChainPop = consensus::chain_pop(&anr.pk).is_some();
     let mut anr = anr;
-    anr.has_chain_pop = false; // placeholder
+    anr.hasChainPop = false; // placeholder
 
     let pk = anr.pk.clone();
-    
+
     // check if anr already exists and update accordingly
-    ANR_STORE.entry(pk.clone()).and_modify(|old| {
-        // only update if newer timestamp
-        if anr.ts > old.ts {
-            // check if ip4/port changed
-            let same_ip4_port = old.ip4 == anr.ip4 && old.port == anr.port;
-            if !same_ip4_port {
-                // reset handshake status
-                anr.handshaked = false;
-                anr.error = None;
-                anr.error_tries = 0;
-                anr.next_check = anr.ts + 3;
-            } else {
-                // preserve handshake status
-                anr.handshaked = old.handshaked;
+    ANR_STORE
+        .entry(pk.clone())
+        .and_modify(|old| {
+            // only update if newer timestamp
+            if anr.ts > old.ts {
+                // check if ip4/port changed
+                let same_ip4_port = old.ip4 == anr.ip4 && old.port == anr.port;
+                if !same_ip4_port {
+                    // reset handshake status
+                    anr.handshaked = false;
+                    anr.error = None;
+                    anr.error_tries = 0;
+                    anr.next_check = get_unix_secs_now() + 3;
+                } else {
+                    // preserve handshake status
+                    anr.handshaked = old.handshaked;
+                }
+                *old = anr.clone();
             }
-            *old = anr.clone();
-        }
-    }).or_insert_with(|| {
-        // new anr
-        anr.handshaked = false;
-        anr.error = None;
-        anr.error_tries = 0;
-        anr.next_check = anr.ts + 3;
-        anr
-    });
+        })
+        .or_insert_with(|| {
+            // new anr
+            anr.handshaked = false;
+            anr.error = None;
+            anr.error_tries = 0;
+            anr.next_check = get_unix_secs_now() + 3;
+            anr
+        });
 
     Ok(())
 }
 
 // get anr by public key
-pub fn get(pk: &[u8]) -> Result<Option<ANR>, String> {
+pub fn get(pk: &[u8]) -> Result<Option<ANR>, Error> {
     Ok(ANR_STORE.read(pk, |_, v| v.clone()))
 }
 
 // get all anrs
-pub fn get_all() -> Result<Vec<ANR>, String> {
+pub fn get_all() -> Result<Vec<ANR>, Error> {
     let mut anrs = Vec::new();
     ANR_STORE.scan(|_k, v| {
         anrs.push(v.clone());
@@ -208,7 +274,7 @@ pub fn get_all() -> Result<Vec<ANR>, String> {
 }
 
 // set handshaked status
-pub fn set_handshaked(pk: &[u8]) -> Result<(), String> {
+pub fn set_handshaked(pk: &[u8]) -> Result<(), Error> {
     let _ = ANR_STORE.entry(pk.to_vec()).and_modify(|anr| {
         anr.handshaked = true;
     });
@@ -218,7 +284,7 @@ pub fn set_handshaked(pk: &[u8]) -> Result<(), String> {
 // query functions
 
 // get all handshaked node public keys
-pub fn handshaked() -> Result<Vec<Vec<u8>>, String> {
+pub fn handshaked() -> Result<Vec<Vec<u8>>, Error> {
     let mut pks = Vec::new();
     ANR_STORE.scan(|k, v| {
         if v.handshaked {
@@ -229,7 +295,7 @@ pub fn handshaked() -> Result<Vec<Vec<u8>>, String> {
 }
 
 // get all not handshaked (pk, ip4) pairs
-pub fn not_handshaked_pk_ip4() -> Result<Vec<(Vec<u8>, Ipv4Addr)>, String> {
+pub fn not_handshaked_pk_ip4() -> Result<Vec<(Vec<u8>, Ipv4Addr)>, Error> {
     let mut results = Vec::new();
     ANR_STORE.scan(|k, v| {
         if !v.handshaked {
@@ -240,17 +306,17 @@ pub fn not_handshaked_pk_ip4() -> Result<Vec<(Vec<u8>, Ipv4Addr)>, String> {
 }
 
 // check if node is handshaked
-pub fn is_handshaked(pk: &[u8]) -> Result<bool, String> {
+pub fn is_handshaked(pk: &[u8]) -> Result<bool, Error> {
     Ok(ANR_STORE.read(pk, |_, v| v.handshaked).unwrap_or(false))
 }
 
 // check if node is handshaked with valid ip4
-pub fn handshaked_and_valid_ip4(pk: &[u8], ip4: &Ipv4Addr) -> Result<bool, String> {
+pub fn handshaked_and_valid_ip4(pk: &[u8], ip4: &Ipv4Addr) -> Result<bool, Error> {
     Ok(ANR_STORE.read(pk, |_, v| v.handshaked && v.ip4 == *ip4).unwrap_or(false))
 }
 
 // get random verified nodes
-pub fn get_random_verified(count: usize) -> Result<Vec<ANR>, String> {
+pub fn get_random_verified(count: usize) -> Result<Vec<ANR>, Error> {
     use rand::seq::SliceRandom;
 
     let pks = handshaked()?;
@@ -268,7 +334,7 @@ pub fn get_random_verified(count: usize) -> Result<Vec<ANR>, String> {
 }
 
 // get random unverified nodes
-pub fn get_random_unverified(count: usize) -> Result<Vec<(Vec<u8>, Ipv4Addr)>, String> {
+pub fn get_random_unverified(count: usize) -> Result<Vec<(Vec<u8>, Ipv4Addr)>, Error> {
     use rand::seq::SliceRandom;
     use std::collections::HashSet;
 
@@ -290,7 +356,7 @@ pub fn get_random_unverified(count: usize) -> Result<Vec<(Vec<u8>, Ipv4Addr)>, S
 }
 
 // get all validators from handshaked nodes
-pub fn all_validators() -> Result<Vec<ANR>, String> {
+pub fn all_validators() -> Result<Vec<ANR>, Error> {
     // this would need integration with consensus module to get validator set
     // for now, return all handshaked nodes
     let pks = handshaked()?;
@@ -305,14 +371,33 @@ pub fn all_validators() -> Result<Vec<ANR>, String> {
     Ok(anrs)
 }
 
+// get all handshaked (pk, ip4) pairs
+pub fn handshaked_pk_ip4() -> Result<Vec<(Vec<u8>, Ipv4Addr)>, Error> {
+    let mut results = Vec::new();
+    ANR_STORE.scan(|k, v| {
+        if v.handshaked {
+            results.push((k.clone(), v.ip4));
+        }
+    });
+    Ok(results)
+}
+
+// get ip addresses for given public keys
+pub fn by_pks_ip(pks: &[Vec<u8>]) -> Result<Vec<Ipv4Addr>, Error> {
+    let pk_set: std::collections::HashSet<_> = pks.iter().collect();
+    let mut ips = Vec::new();
+
+    ANR_STORE.scan(|_, v| {
+        if pk_set.contains(&v.pk) {
+            ips.push(v.ip4);
+        }
+    });
+
+    Ok(ips)
+}
+
 // seed initial anrs (called on startup)
-pub fn seed(
-    seed_anrs: Vec<ANR>,
-    my_sk: &[u8],
-    my_pk: Vec<u8>,
-    my_pop: Vec<u8>,
-    version: String,
-) -> Result<(), String> {
+pub fn seed(seed_anrs: Vec<ANR>, my_sk: &[u8], my_pk: Vec<u8>, my_pop: Vec<u8>, version: String) -> Result<(), Error> {
     // insert seed anrs
     for anr in seed_anrs {
         insert(anr)?;
@@ -330,7 +415,7 @@ pub fn seed(
 }
 
 // clear all anrs (useful for testing)
-pub fn clear_all() -> Result<(), String> {
+pub fn clear_all() -> Result<(), Error> {
     ANR_STORE.clear();
     Ok(())
 }
@@ -362,11 +447,8 @@ mod tests {
         let mut pk = vec![2; 48];
         // make pk unique per test run to avoid collision with parallel tests
         let pid_bytes = std::process::id().to_le_bytes();
-        let time_bytes = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_le_bytes();
+        let time_bytes =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos().to_le_bytes();
         pk[..4].copy_from_slice(&pid_bytes);
         pk[4..12].copy_from_slice(&time_bytes[..8]);
 
@@ -384,7 +466,7 @@ mod tests {
             ts: 1234567890,
             version,
             handshaked: false,
-            has_chain_pop: false,
+            hasChainPop: false,
             error: None,
             error_tries: 0,
             next_check: 1234567893,
@@ -418,10 +500,10 @@ mod tests {
         // test count functions - since tests run in parallel, we can't assume exact counts
         let total_count = count();
         assert!(total_count >= 1, "Expected at least 1 ANR, got {}", total_count);
-        
+
         // cleanup - remove only our test anr
         let _ = ANR_STORE.remove(&pk);
-        
+
         // verify our pk was removed
         assert!(get(&pk).unwrap().is_none(), "Our pk should be removed");
     }
@@ -431,11 +513,8 @@ mod tests {
         // create unique pk for this test
         let mut pk = vec![1; 48];
         let pid_bytes = std::process::id().to_le_bytes();
-        let time_bytes = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-            .to_le_bytes();
+        let time_bytes =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos().to_le_bytes();
         pk[..4].copy_from_slice(&pid_bytes);
         pk[4..12].copy_from_slice(&time_bytes[..8]);
         let pop = vec![2; 96];
@@ -452,7 +531,7 @@ mod tests {
             ts: 1000,
             version: version.clone(),
             handshaked: true,
-            has_chain_pop: false,
+            hasChainPop: false,
             error: None,
             error_tries: 0,
             next_check: 1003,
@@ -470,7 +549,7 @@ mod tests {
             ts: 999,
             version: version.clone(),
             handshaked: false,
-            has_chain_pop: false,
+            hasChainPop: false,
             error: None,
             error_tries: 0,
             next_check: 1002,
@@ -493,7 +572,7 @@ mod tests {
             ts: 2000,
             version: "2.0.0".to_string(),
             handshaked: false,
-            has_chain_pop: false,
+            hasChainPop: false,
             error: None,
             error_tries: 0,
             next_check: 2003,
@@ -515,7 +594,7 @@ mod tests {
             ts: 3000,
             version: "3.0.0".to_string(),
             handshaked: true,
-            has_chain_pop: false,
+            hasChainPop: false,
             error: Some("old error".to_string()),
             error_tries: 5,
             next_check: 3003,

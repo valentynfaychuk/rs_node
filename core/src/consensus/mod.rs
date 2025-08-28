@@ -10,8 +10,8 @@ pub mod tx;
 
 pub use agg_sig::{AggSig, DST, DST_ATT, DST_ENTRY, DST_MOTION, DST_NODE, DST_POP, DST_TX, DST_VRF};
 
-use crate::utils::rocksdb;
 use crate::utils::misc::TermExt;
+use crate::utils::rocksdb;
 use eetf::Term;
 
 /// Return trainers for the given height, reading from contractstate CF.

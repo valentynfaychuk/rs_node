@@ -166,7 +166,6 @@ amadeus_uptime_seconds {}"#,
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,22 +177,8 @@ mod tests {
         m.add_v2_udp_packet(250);
         let j = m.get_json();
         let packets = j.get("packets").expect("packets").as_object().unwrap();
-        assert_eq!(
-            packets
-                .get("total_incoming_packets")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            2
-        );
-        assert_eq!(
-            packets
-                .get("total_incoming_bytes")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            350
-        );
+        assert_eq!(packets.get("total_incoming_packets").unwrap().as_u64().unwrap(), 2);
+        assert_eq!(packets.get("total_incoming_bytes").unwrap().as_u64().unwrap(), 350);
     }
 
     #[test]
