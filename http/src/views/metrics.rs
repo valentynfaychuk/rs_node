@@ -3,7 +3,7 @@ use serde_json::Value;
 pub fn page(metrics: Value) -> String {
     let uptime_seconds = metrics["uptime"].as_u64().unwrap_or(0);
     let uptime_formatted = format_uptime(uptime_seconds);
-    
+
     let packets = &metrics["packets"];
     let total_bytes = packets["total_incoming_bytes"].as_u64().unwrap_or(0);
     let total_packets = packets["total_incoming_packets"].as_u64().unwrap_or(0);
@@ -12,7 +12,7 @@ pub fn page(metrics: Value) -> String {
 
     let bytes_formatted = format_bytes(total_bytes);
     let bytes_per_sec_formatted = format_bytes(bytes_per_second);
-    
+
     // Protocol counts from handled_protos
     let empty_map = serde_json::Map::new();
     let handled_protos = metrics["handled_protos"].as_object().unwrap_or(&empty_map);
@@ -21,12 +21,12 @@ pub fn page(metrics: Value) -> String {
     let entry_count = handled_protos.get("entry").and_then(|v| v.as_u64()).unwrap_or(0);
     let attestation_count = handled_protos.get("attestation_bulk").and_then(|v| v.as_u64()).unwrap_or(0);
     let txpool_count = handled_protos.get("txpool").and_then(|v| v.as_u64()).unwrap_or(0);
-    
+
     // Error counts
     let empty_errors_map = serde_json::Map::new();
     let errors = metrics["errors"].as_object().unwrap_or(&empty_errors_map);
     let total_errors: u64 = errors.values().filter_map(|v| v.as_u64()).sum();
-    
+
     let total_messages = ping_count + pong_count + entry_count + attestation_count + txpool_count;
 
     format!(

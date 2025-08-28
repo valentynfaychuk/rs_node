@@ -32,7 +32,7 @@ impl DumpReplaySocket for UdpSocket {
         // dump outgoing packet with fixed source address
         let src_addr = "127.0.0.1:39696".parse().unwrap();
         maybe_dump_datagram(src_addr, buf).await;
-        
+
         // send the packet normally
         self.send_to(buf, target).await
     }

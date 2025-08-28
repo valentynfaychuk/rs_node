@@ -1,9 +1,9 @@
 use crate::consensus::agg_sig::DST_ATT;
+use crate::node::protocol;
+use crate::node::protocol::Protocol;
 use crate::utils::bls12_381 as bls;
 use crate::utils::bls12_381::Error as BlsError;
 use crate::utils::misc::{TermExt, TermMap};
-use crate::node::protocol;
-use crate::node::protocol::Protocol;
 use eetf::DecodeError as EtfDecodeError;
 use eetf::EncodeError as EtfEncodeError;
 use eetf::{Atom, Binary, List, Term};
@@ -62,7 +62,6 @@ impl crate::utils::misc::Typename for AttestationBulk {
 
 #[async_trait::async_trait]
 impl Protocol for AttestationBulk {
-
     #[instrument(skip(map), name = "AttestationBulk::from_etf_map_validated")]
     fn from_etf_map_validated(map: TermMap) -> Result<Self, protocol::Error> {
         let list = map.get_list("attestations_packed").ok_or(Error::Missing("attestations_packed"))?;

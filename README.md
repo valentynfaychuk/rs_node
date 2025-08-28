@@ -44,6 +44,9 @@ in progress and some of the KV unittests are flaky. Don't freak out
 if they fail sometimes, just re-run them.
 
 ```bash
+cargo install wasm-tools
+./scripts/compile-contracts.sh
+
 # The test-all is also an alias
 cargo test-all
 ```
