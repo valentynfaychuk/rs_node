@@ -165,7 +165,8 @@ function renderPeers() {{
 
 function getTimeAgo(lastTs) {{
     const now = Math.floor(Date.now() / 1000);
-    const diff = now - lastTs;
+    const lastTsSeconds = Math.floor(lastTs / 1000); // Convert ms to seconds
+    const diff = now - lastTsSeconds;
     if (diff < 60) return `${{diff}}s ago`;
     if (diff < 3600) return `${{Math.floor(diff / 60)}}m ago`;
     if (diff < 86400) return `${{Math.floor(diff / 3600)}}h ago`;
@@ -225,7 +226,8 @@ fn esc(s: &str) -> String {
 fn get_time_ago(last_ts: u64) -> String {
     use ama_core::utils::misc::get_unix_secs_now;
     let now = get_unix_secs_now();
-    let diff = now.saturating_sub(last_ts);
+    let last_ts_secs = last_ts / 1000; // convert ms to seconds
+    let diff = now.saturating_sub(last_ts_secs);
     if diff < 60 {
         format!("{}s", diff)
     } else if diff < 3600 {

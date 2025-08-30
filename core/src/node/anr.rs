@@ -40,6 +40,7 @@ static ANR_STORE: Lazy<Arc<HashMap<Vec<u8>, ANR>>> = Lazy::new(|| Arc::new(HashM
 
 // ama node record
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
+#[allow(non_snake_case)]
 pub struct ANR {
     pub ip4: Ipv4Addr,
     pub pk: Vec<u8>,
@@ -52,6 +53,7 @@ pub struct ANR {
     #[serde(skip)]
     pub handshaked: bool,
     #[serde(skip)]
+    #[allow(non_snake_case)]
     pub hasChainPop: bool,
     #[serde(skip)]
     pub error: Option<String>,
@@ -63,14 +65,14 @@ pub struct ANR {
 
 impl ANR {
     // build a new anr with signature
-    pub fn build(sk: &[u8], pk: Vec<u8>, pop: Vec<u8>, ip4: Ipv4Addr, version: String) -> Result<Self, Error> {
+    pub fn build(sk: &[u8], pk: &[u8], pop: &[u8], ip4: Ipv4Addr, version: String) -> Result<Self, Error> {
         // use seconds like elixir :os.system_time(1)
         let ts = get_unix_secs_now();
 
         let mut anr = ANR {
             ip4,
-            pk: pk.clone(),
-            pop,
+            pk: pk.to_vec(),
+            pop: pop.to_vec(),
             port: 36969,
             ts,
             version,
@@ -383,8 +385,9 @@ pub fn handshaked_pk_ip4() -> Result<Vec<(Vec<u8>, Ipv4Addr)>, Error> {
 }
 
 // get ip addresses for given public keys
-pub fn by_pks_ip(pks: &[Vec<u8>]) -> Result<Vec<Ipv4Addr>, Error> {
-    let pk_set: std::collections::HashSet<_> = pks.iter().collect();
+pub fn by_pks_ip<T: AsRef<[u8]>>(pks: &[T]) -> Result<Vec<Ipv4Addr>, Error> {
+    // build a set of owned pk bytes for efficient lookup
+    let pk_set: std::collections::HashSet<Vec<u8>> = pks.iter().map(|p| p.as_ref().to_vec()).collect();
     let mut ips = Vec::new();
 
     ANR_STORE.scan(|_, v| {
@@ -397,18 +400,26 @@ pub fn by_pks_ip(pks: &[Vec<u8>]) -> Result<Vec<Ipv4Addr>, Error> {
 }
 
 // seed initial anrs (called on startup)
-pub fn seed(seed_anrs: Vec<ANR>, my_sk: &[u8], my_pk: Vec<u8>, my_pop: Vec<u8>, version: String) -> Result<(), Error> {
+/// my_ip: Optional node IPv4 to use for self-ANR; when None, falls back to PUBLIC_UDP_IPV4 env or 0.0.0.0
+pub fn seed(
+    seed_anrs: Vec<ANR>,
+    my_sk: &[u8],
+    my_pk: &[u8],
+    my_pop: &[u8],
+    version: String,
+    my_ip: Option<Ipv4Addr>,
+) -> Result<(), Error> {
     // insert seed anrs
     for anr in seed_anrs {
         insert(anr)?;
     }
 
-    // build and insert our own anr
-    // would need stun::get_current_ip4() equivalent
-    let my_ip4 = Ipv4Addr::new(0, 0, 0, 0); // placeholder
-    if let Ok(my_anr) = ANR::build(my_sk, my_pk.clone(), my_pop, my_ip4, version) {
+    // build and insert our own anr using provided IP when available
+    let my_ip4 = my_ip.unwrap_or(Ipv4Addr::new(0, 0, 0, 0));
+
+    if let Ok(my_anr) = ANR::build(my_sk, my_pk, my_pop, my_ip4, version) {
         insert(my_anr)?;
-        set_handshaked(&my_pk)?;
+        set_handshaked(my_pk)?;
     }
 
     Ok(())

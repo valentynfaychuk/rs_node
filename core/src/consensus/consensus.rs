@@ -152,7 +152,7 @@ pub fn get_chain_tip_entry() -> Result<Option<Entry>, Error> {
     }
 }
 
-pub fn get_chain_rooted_tip_entry() -> Result<Option<Entry>, Error> {
+pub fn get_rooted_tip_entry() -> Result<Option<Entry>, Error> {
     match fabric::get_rooted_tip()? {
         Some(hash) => Ok(fabric::get_entry_by_hash(&hash)),
         None => Ok(None),

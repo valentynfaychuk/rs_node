@@ -59,7 +59,7 @@ CLI is a client that can deploy a contract or send transactions.
 cargo cli gen-sk sk.local
 cargo cli get-pk --sk sk.local
 cargo cli build-tx Contract test "[]" --sk sk.local --send
-cargo cli deploy-tx contracts/simple_counter.wasm --sk sk.local --send
+UDP_ADDR=167.99.137.218:36969 cargo cli deploy-tx contracts/simple_counter.wasm --sk sk.local --send
 ```
 
 ### Node simulation (NATIVE)
@@ -143,6 +143,13 @@ rocksdb_ldb --db=.config/amadeusd/fabric/db list_column_families
 rocksdb_ldb --db=.config/amadeusd/fabric/db --column_family=sysconf scan
 rocksdb_ldb --db=.config/amadeusd/fabric/db --column_family=entry_by_height scan
 rocksdb_ldb --db=.config/amadeusd/fabric/db --column_family=sysconf get rooted_tip
+```
+
+## Debugging on Elixir Node
+
+```elixir
+NodePeers.all() |> Enum.filter(fn peer -> peer.ip == "167.99.137.218" end) |> Enum.map(& &1.ip)
+API.Peer.all_for_web()
 ```
 
 ## Performance considerations

@@ -196,17 +196,10 @@ impl NodeGenSocketGen {
     pub async fn send_to_some(&self, peer_ips: Vec<String>, msg_compressed: Vec<u8>) -> Result<(), Error> {
         for ip_str in peer_ips {
             if let Ok(ip) = ip_str.parse::<Ipv4Addr>() {
-                // Clone the shared secret if it exists to avoid holding the lock across await
-                let has_shared_secret = {
-                    let peer_map = self.peers.read().unwrap();
-                    peer_map.values().find(|p| p.ip == ip).map(|p| p.shared_secret.is_some()).unwrap_or(false)
-                };
-
-                if has_shared_secret {
-                    // TODO: implement encrypt_message_v2
-                    let addr = SocketAddr::new(ip.into(), self.config.port);
-                    self.socket.send_to(&msg_compressed, addr).await?;
-                }
+                // initial bootstrap messages are sent unencrypted to the fixed node port (36969)
+                // TODO: implement encrypt_message_v2 when shared_secret is established
+                let addr = SocketAddr::new(ip.into(), 36969);
+                self.socket.send_to(&msg_compressed, addr).await?;
             }
         }
         Ok(())

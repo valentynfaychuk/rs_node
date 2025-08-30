@@ -7,66 +7,81 @@ mod views {
 
 use ama_core::Context;
 use axum::{response::Html, routing::get};
+use std::process;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
+use tracing::{error, info};
 
 pub async fn serve(socket: TcpListener, ctx: Arc<Context>) -> anyhow::Result<()> {
+    info!(
+        "http server starting on {}",
+        socket.local_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into())
+    );
+
     let app = routes::app(ctx.clone())
         .route(
             "/",
             get(|| async {
-                // Try to serve the simple dashboard first
-                let simple_paths = [
-                    "dashboard/static/simple-dashboard.html",
-                    "../dashboard/static/simple-dashboard.html",
-                    "./dashboard/static/simple-dashboard.html",
-                    "static/simple-dashboard.html",
-                ];
-
-                for path in &simple_paths {
-                    if let Ok(content) = tokio::fs::read_to_string(path).await {
-                        return Html(content);
-                    }
-                }
-
-                // Fallback: serve embedded simple dashboard HTML
+                info!("GET /");
                 Html(get_embedded_simple_dashboard())
             }),
         )
         .route(
             "/advanced",
             get(|| async {
-                // Try to serve the advanced React dashboard
-                let advanced_paths = [
-                    "dashboard/static/dashboard.html",
-                    "../dashboard/static/dashboard.html",
-                    "./dashboard/static/dashboard.html",
-                    "static/dashboard.html",
-                ];
-
-                for path in &advanced_paths {
-                    if let Ok(content) = tokio::fs::read_to_string(path).await {
-                        return Html(content);
-                    }
-                }
-
-                // Fallback: serve embedded advanced dashboard HTML
+                info!("GET /advanced");
                 Html(get_embedded_dashboard())
             }),
         )
-        .nest_service("/static", ServeDir::new("dashboard/static"));
+        .nest_service("/static", ServeDir::new("http/static"))
+        // Add timeout for regular requests (SSE streams handle their own timeouts)
+        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .layer(TraceLayer::new_for_http());
 
-    axum::serve(socket, app).await.unwrap();
+    // Configure server with connection limits
+    let serve_future = axum::serve(socket, app).with_graceful_shutdown(shutdown_signal());
+
+    if let Err(e) = serve_future.await {
+        error!("http server error: {}", e);
+    }
     Ok(())
 }
 
 fn get_embedded_simple_dashboard() -> String {
-    // Embedded simple dashboard HTML - this ensures it always works
     include_str!("../static/simple-dashboard.html").to_string()
 }
 
 fn get_embedded_dashboard() -> String {
-    // Embedded advanced dashboard HTML
     include_str!("../static/dashboard.html").to_string()
+}
+
+async fn shutdown_signal() {
+    // wait for ctrl-c or termination signal
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    info!("shutdown signal received");
+
+    process::exit(0);
 }

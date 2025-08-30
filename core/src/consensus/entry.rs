@@ -65,6 +65,10 @@ impl From<Entry> for EntrySummary {
 impl EntrySummary {
     /// Helper that reads an EntrySummary from an ETF term.
     pub fn from_etf_term(map: &TermMap) -> Result<Self, Error> {
+        // allow empty map to represent "no tip" like the Elixir reference
+        if map.0.is_empty() {
+            return Ok(Self::empty());
+        }
         let header_bin: Vec<u8> = map.get_binary("header").ok_or(Error::BadEtf("header"))?;
         let signature = map.get_binary("signature").ok_or(Error::BadEtf("signature"))?;
         let mask = map.get_binary("mask").map(bitvec_to_bools);
@@ -81,6 +85,21 @@ impl EntrySummary {
             m.insert(Term::Atom(Atom::from("mask")), Term::from(Binary { bytes: bools_to_bitvec(mask) }));
         }
         Ok(Term::from(Map { map: m }))
+    }
+
+    /// Empty summary placeholder used when tips are missing
+    pub fn empty() -> Self {
+        let header = EntryHeader {
+            height: 0,
+            slot: 0,
+            prev_slot: 0,
+            prev_hash: [0u8; 32],
+            dr: [0u8; 32],
+            vr: [0u8; 96],
+            signer: [0u8; 48],
+            txs_hash: [0u8; 32],
+        };
+        Self { header, signature: [0u8; 96], mask: None }
     }
 }
 

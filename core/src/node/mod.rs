@@ -9,6 +9,12 @@ pub mod reassembler;
 pub mod socket_gen;
 pub mod state;
 
+// Broadcaster trait defines a minimal sending capability for UDP broadcast mechanisms.
+pub trait Broadcaster: Send + Sync {
+    /// fire-and-forget send to a set of IPv4 addresses with a pre-serialized payload
+    fn send_to(&self, ips: Vec<String>, payload: Vec<u8>);
+}
+
 pub use node_gen::NodeGen;
 pub use peers::NodePeers;
 pub use reassembler::ReedSolomonReassembler;

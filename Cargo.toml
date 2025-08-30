@@ -5,7 +5,7 @@ members = ["core", "client", "http"]
 
 [workspace.dependencies]
 ama_core = { path = "core" }
-http = { path = "http" }
+http = { path = "http", package = "dashboard" }
 
 [patch.crates-io]
 bls12_381 = { git = "https://github.com/vans163/bls12_381" } # has newer deps

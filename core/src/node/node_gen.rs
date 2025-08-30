@@ -1,4 +1,3 @@
-use crate::node::state::NodeState;
 use crate::node::{
     anr, peers,
     socket_gen::{NodeGenSocketGen, SocketGenConfig},
@@ -6,9 +5,7 @@ use crate::node::{
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::net::Ipv4Addr;
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
-use tokio::time;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -27,22 +24,11 @@ pub enum Error {
 pub struct NodeGen {
     ip: Ipv4Addr,
     port: u16,
-    node_state: Arc<RwLock<NodeState>>,
     socket_gens: Vec<Arc<NodeGenSocketGen>>,
 }
 
 impl NodeGen {
     pub async fn new(ip: Ipv4Addr, port: u16) -> Result<Self, Error> {
-        // seed peers and ANR with placeholder values for now
-        // TODO: Get actual values from config/environment
-        let seed_anrs = vec![];
-        let my_sk = vec![0u8; 32];
-        let my_pk = vec![0u8; 48];
-        let my_pop = vec![0u8; 96];
-        let version = "1.0.0".to_string();
-        anr::seed(seed_anrs, &my_sk, my_pk, my_pop, version)?;
-        peers::seed(ip)?;
-
         // create multiple socket generators (8 as in Elixir)
         let mut socket_gens = Vec::new();
         for i in 0..8 {
@@ -57,7 +43,7 @@ impl NodeGen {
             socket_gens.push(Arc::new(socket_gen));
         }
 
-        Ok(Self { ip, port, node_state: Arc::new(RwLock::new(NodeState::init())), socket_gens })
+        Ok(Self { ip, port, socket_gens })
     }
 
     pub async fn start(&self) -> Result<(), Error> {
@@ -73,58 +59,9 @@ impl NodeGen {
             });
         }
 
-        // start periodic tasks
-        self.start_tick_tasks().await;
-
         Ok(())
     }
 
-    async fn start_tick_tasks(&self) {
-        // main tick every 1 second
-        let node_gen_clone = self.clone_for_task();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(1));
-            loop {
-                interval.tick().await;
-                if let Err(e) = node_gen_clone.tick().await {
-                    warn!("Tick error: {}", e);
-                }
-            }
-        });
-
-        // ping tick every 500ms
-        let node_gen_clone = self.clone_for_task();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_millis(500));
-            loop {
-                interval.tick().await;
-                if let Err(e) = node_gen_clone.broadcast_ping().await {
-                    warn!("Ping broadcast error: {}", e);
-                }
-            }
-        });
-
-        // ANR check tick every 1 second
-        let node_gen_clone = self.clone_for_task();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(1));
-            loop {
-                interval.tick().await;
-                if let Err(e) = node_gen_clone.broadcast_check_anr().await {
-                    warn!("ANR check error: {}", e);
-                }
-            }
-        });
-    }
-
-    fn clone_for_task(&self) -> NodeGenClone {
-        NodeGenClone {
-            ip: self.ip,
-            port: self.port,
-            node_state: Arc::clone(&self.node_state),
-            socket_gens: self.socket_gens.clone(),
-        }
-    }
 
     /// Get socket generator by index
     pub fn get_socket_gen(&self) -> Arc<NodeGenSocketGen> {
@@ -154,11 +91,11 @@ impl NodeGen {
         Ok(())
     }
 
-    pub async fn broadcast_check_anr(&self) -> Result<(), Error> {
+    pub async fn broadcast_check_anr(&self, trainer_pk: &[u8]) -> Result<(), Error> {
         debug!("Broadcasting ANR checks");
 
-        // get my trainer pk from environment or config
-        let my_pk = std::env::var("TRAINER_PK").unwrap_or_else(|_| "".to_string()).as_bytes().to_vec();
+        // use provided trainer pk
+        let my_pk = trainer_pk.to_vec();
 
         let random_unverified = anr::get_random_unverified(3)?;
 
@@ -217,70 +154,6 @@ impl NodeGen {
     }
 }
 
-// Clone-like struct for async tasks (avoids Clone trait complexity)
-#[derive(Clone)]
-struct NodeGenClone {
-    ip: Ipv4Addr,
-    port: u16,
-    node_state: Arc<RwLock<NodeState>>,
-    socket_gens: Vec<Arc<NodeGenSocketGen>>,
-}
-
-impl NodeGenClone {
-    fn get_socket_gen(&self) -> Arc<NodeGenSocketGen> {
-        let idx = rand::random::<usize>() % self.socket_gens.len();
-        Arc::clone(&self.socket_gens[idx])
-    }
-
-    async fn broadcast_ping(&self) -> Result<(), Error> {
-        debug!("Broadcasting ping to all peers");
-
-        // TODO: create ping message using protocol module
-        let msg_compressed = vec![]; // placeholder
-
-        let all_ips = peers::get_all_ips()?;
-        let socket_gen = self.get_socket_gen();
-
-        socket_gen.send_to_some(all_ips, msg_compressed).await.map_err(|e| Error::SocketError(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn broadcast_check_anr(&self) -> Result<(), Error> {
-        debug!("Broadcasting ANR checks");
-
-        let my_pk = std::env::var("TRAINER_PK").unwrap_or_else(|_| "".to_string()).as_bytes().to_vec();
-
-        let random_unverified = anr::get_random_unverified(3)?;
-
-        for (pk, ip) in random_unverified {
-            if pk != my_pk {
-                debug!("ANR request to {}", ip);
-
-                let _challenge =
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
-                        as u64;
-
-                // TODO: create new_phone_who_dis message using protocol module
-                let msg_compressed = vec![]; // placeholder
-
-                let socket_gen = self.get_socket_gen();
-                socket_gen
-                    .send_to_some(vec![ip.to_string()], msg_compressed)
-                    .await
-                    .map_err(|e| Error::SocketError(e.to_string()))?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn tick(&self) -> Result<(), Error> {
-        debug!("Node tick - clearing stale peers");
-        peers::clear_stale()?;
-        Ok(())
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum BroadcastType {
@@ -295,4 +168,14 @@ pub enum BroadcastType {
 pub enum PeerSelector {
     All,
     ByWho(String),
+}
+
+impl crate::node::Broadcaster for NodeGen {
+    fn send_to(&self, ips: Vec<String>, payload: Vec<u8>) {
+        let socket_gen = self.get_socket_gen();
+        tokio::spawn(async move {
+            // ignore result per fire-and-forget semantics
+            let _ = socket_gen.send_to_some(ips, payload).await;
+        });
+    }
 }
