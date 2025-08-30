@@ -4,6 +4,89 @@ use rocksdb::{
 };
 use tokio::fs::create_dir_all;
 
+#[cfg(test)]
+thread_local! {
+    static TEST_DB: std::cell::RefCell<Option<DbHandles>> = std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub struct TestDbGuard {
+    base: String,
+}
+
+#[cfg(test)]
+impl Drop for TestDbGuard {
+    fn drop(&mut self) {
+        // drop the thread-local DB so RocksDB files can be removed
+        TEST_DB.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        // best-effort cleanup of the base directory
+        let _ = std::fs::remove_dir_all(&self.base);
+    }
+}
+
+#[cfg(test)]
+impl TestDbGuard {
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+}
+
+#[cfg(test)]
+pub fn init_for_test(base: &str) -> Result<TestDbGuard, Error> {
+    // create base/db path synchronously (tests are synchronous)
+    let path = format!("{}/db", base);
+    std::fs::create_dir_all(&path).map_err(|e| tokio::io::Error::from(e))?;
+
+    let mut db_opts = Options::default();
+    db_opts.create_if_missing(true);
+    db_opts.create_missing_column_families(true);
+
+    let cf_descs: Vec<_> = cf_names()
+        .iter()
+        .map(|&name| {
+            let mut opts = Options::default();
+            opts.set_target_file_size_base(2 * 1024 * 1024 * 1024);
+            opts.set_target_file_size_multiplier(2);
+            ColumnFamilyDescriptor::new(name, opts)
+        })
+        .collect();
+
+    let db: OptimisticTransactionDB<MultiThreaded> =
+        OptimisticTransactionDB::open_cf_descriptors(&db_opts, path, cf_descs)?;
+
+    TEST_DB.with(|cell| {
+        *cell.borrow_mut() = Some(DbHandles { db });
+    });
+
+    Ok(TestDbGuard { base: base.to_string() })
+}
+
+#[cfg(test)]
+fn with_handles<F, R>(f: F) -> R
+where
+    F: FnOnce(&DbHandles) -> R,
+{
+    TEST_DB.with(|cell| {
+        if let Some(h) = cell.borrow().as_ref() {
+            f(h)
+        } else {
+            let h = get_handles();
+            f(h)
+        }
+    })
+}
+
+#[cfg(not(test))]
+fn with_handles<F, R>(f: F) -> R
+where
+    F: FnOnce(&DbHandles) -> R,
+{
+    let h = get_handles();
+    f(h)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
@@ -76,75 +159,78 @@ fn get_handles() -> &'static DbHandles {
 }
 
 pub fn get(cf: &str, key: &[u8]) -> Result<Option<Vec<u8>>, Error> {
-    let h = get_handles();
-    let cf_h = h.db.cf_handle(cf).expect("cf name");
-    let v = h.db.get_cf(&cf_h, key)?;
-    Ok(v)
+    Ok(with_handles(|h| {
+        let cf_h = h.db.cf_handle(cf).expect("cf name");
+        h.db.get_cf(&cf_h, key)
+    })?)
 }
 
 pub fn put(cf: &str, key: &[u8], value: &[u8]) -> Result<(), Error> {
-    let h = get_handles();
-    let cf_h = h.db.cf_handle(cf).expect("cf name");
-    h.db.put_cf(&cf_h, key, value)?;
-    Ok(())
+    Ok(with_handles(|h| {
+        let cf_h = h.db.cf_handle(cf).expect("cf name");
+        h.db.put_cf(&cf_h, key, value)
+    })?)
 }
 
 pub fn delete(cf: &str, key: &[u8]) -> Result<(), Error> {
-    let h = get_handles();
-    let cf_h = h.db.cf_handle(cf).expect("cf name");
-    h.db.delete_cf(&cf_h, key)?;
-    Ok(())
+    Ok(with_handles(|h| {
+        let cf_h = h.db.cf_handle(cf).expect("cf name");
+        h.db.delete_cf(&cf_h, key)
+    })?)
 }
 
 pub fn iter_prefix(cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Error> {
-    let h = get_handles();
-    let cf_h = h.db.cf_handle(cf).expect("cf name");
-    let mut ro = ReadOptions::default();
-    ro.set_prefix_same_as_start(true);
-    let mode = IteratorMode::From(prefix, Direction::Forward);
-    let it = h.db.iterator_cf_opt(&cf_h, ro, mode);
-    let mut out = Vec::new();
-    for kv in it {
-        let (k, v) = kv?;
-        if !k.starts_with(prefix) {
-            break;
+    Ok(with_handles(|h| -> std::result::Result<Vec<(Vec<u8>, Vec<u8>)>, rocksdb::Error> {
+        let cf_h = h.db.cf_handle(cf).expect("cf name");
+        let mut ro = ReadOptions::default();
+        ro.set_prefix_same_as_start(true);
+        let mode = IteratorMode::From(prefix, Direction::Forward);
+        let it = h.db.iterator_cf_opt(&cf_h, ro, mode);
+        let mut out = Vec::new();
+        for kv in it {
+            let (k, v) = kv?;
+            if !k.starts_with(prefix) {
+                break;
+            }
+            out.push((k.to_vec(), v.to_vec()));
         }
-        out.push((k.to_vec(), v.to_vec()));
-    }
-    Ok(out)
+        Ok(out)
+    })?)
 }
 
 /// Find the latest key-value under `prefix` with key <= `prefix || key_suffix`
 /// Returns the raw key and value if found, otherwise None
 pub fn get_prev_or_first(cf: &str, prefix: &str, key_suffix: &str) -> Result<Option<(Vec<u8>, Vec<u8>)>, Error> {
-    let h = get_handles();
-    let cf_h = h.db.cf_handle(cf).expect("cf name");
-    let seek_key = format!("{}{}", prefix, key_suffix);
-    let mut it = h.db.iterator_cf(&cf_h, IteratorMode::From(seek_key.as_bytes(), Direction::Reverse));
+    Ok(with_handles(|h| -> std::result::Result<Option<(Vec<u8>, Vec<u8>)>, rocksdb::Error> {
+        let cf_h = h.db.cf_handle(cf).expect("cf name");
+        let seek_key = format!("{}{}", prefix, key_suffix);
+        let mut it = h.db.iterator_cf(&cf_h, IteratorMode::From(seek_key.as_bytes(), Direction::Reverse));
 
-    if let Some(res) = it.next() {
-        let (k, v) = res?;
-        if k.starts_with(prefix.as_bytes()) {
-            return Ok(Some((k.to_vec(), v.to_vec())));
+        if let Some(res) = it.next() {
+            let (k, v) = res?;
+            if k.starts_with(prefix.as_bytes()) {
+                return Ok(Some((k.to_vec(), v.to_vec())));
+            }
         }
-    }
-    Ok(None)
+        Ok(None)
+    })?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::any::type_name_of_val;
 
-    fn unique_base() -> String {
-        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let pid = std::process::id();
-        format!("{}/rs_node_rocks_test_{}_{}", std::env::temp_dir().display(), pid, ts)
+    fn tmp_base_for_test<F: ?Sized>(f: &F) -> String {
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let fq = type_name_of_val(f);
+        format!("/tmp/{}{}", fq, secs)
     }
 
     #[tokio::test]
     async fn rocksdb_basic_ops_and_iters() {
-        let base = unique_base();
-        init(&base).await.expect("init db");
+        let base = tmp_base_for_test(&rocksdb_basic_ops_and_iters);
+        let _guard = init_for_test(&base).expect("init test db");
 
         // basic put/get on default CF
         put("default", b"a:1", b"v1").expect("put");

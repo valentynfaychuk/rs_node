@@ -304,23 +304,20 @@ pub fn revert(m_rev: &[Mutation]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Once;
+    use std::any::type_name_of_val;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::utils::rocksdb;
 
-    static INIT: Once = Once::new();
-
-    fn ensure_db_init() {
-        INIT.call_once(|| {
-            let test_db_path = "target/test_consensus_kv_db";
-            std::fs::create_dir_all(test_db_path).unwrap();
-            tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let _ = crate::utils::rocksdb::init("target/test_consensus_kv").await;
-            });
-        });
+    fn tmp_base_for_test<F: ?Sized>(f: &F) -> String {
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let fq = type_name_of_val(f);
+        format!("/tmp/{}{}", fq, secs)
     }
 
     #[test]
     fn increment_and_get() {
-        ensure_db_init();
+        let base = tmp_base_for_test(&increment_and_get);
+        let _guard = rocksdb::init_for_test(&base).expect("init test db");
         reset_for_tests();
         assert_eq!(kv_get_to_i64("a:1"), None);
         let v = kv_increment("a:1", 5);
@@ -333,7 +330,8 @@ mod tests {
 
     #[test]
     fn prefix_and_clear() {
-        ensure_db_init();
+        let base = tmp_base_for_test(&prefix_and_clear);
+        let _guard = rocksdb::init_for_test(&base).expect("init test db");
         reset_for_tests();
         kv_put("p:x", b"1");
         kv_put("p:y", b"2");
@@ -348,7 +346,8 @@ mod tests {
 
     #[test]
     fn set_bit() {
-        ensure_db_init();
+        let base = tmp_base_for_test(&set_bit);
+        let _guard = rocksdb::init_for_test(&base).expect("init test db");
         reset_for_tests();
         let changed = kv_set_bit("bloom:1", 9, Some(16)); // 2 bytes
         assert!(changed);

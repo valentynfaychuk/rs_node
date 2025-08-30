@@ -1,10 +1,14 @@
 use ama_core::config::{Config, ComputorType, ENTRY_SIZE, TX_SIZE, ATTESTATION_SIZE, QUORUM};
+mod common;
+use common::TmpTestDir;
 
 #[tokio::test]
 async fn test_config_has_all_essential_elixir_parts() {
+    // per-test tmp dir
+    let tmp = TmpTestDir::for_test(&test_config_has_all_essential_elixir_parts).unwrap();
     // set up test environment
     unsafe {
-        std::env::set_var("WORKFOLDER", "/tmp/test_amadeusd");
+        std::env::set_var("WORKFOLDER", tmp.to_str());
         std::env::set_var("HTTP_PORT", "8080");
         std::env::set_var("OTHERNODES", "192.168.1.1,192.168.1.2");
         std::env::set_var("TRUSTFACTOR", "0.9");
@@ -17,10 +21,10 @@ async fn test_config_has_all_essential_elixir_parts() {
         std::env::set_var("ANR_DESC", "Test Description");
     }
     
-    let config = Config::from_fs(Some("/tmp/test_config"), None).await.unwrap();
+    let config = Config::from_fs(Some(tmp.to_str()), None).await.unwrap();
     
     // verify filesystem paths
-    assert_eq!(config.work_folder, "/tmp/test_config");
+    assert_eq!(config.work_folder, tmp.to_str());
     
     // verify version info
     assert_eq!(config.get_ver(), "1.1.5");
@@ -68,10 +72,6 @@ async fn test_config_has_all_essential_elixir_parts() {
     assert_eq!(ATTESTATION_SIZE, 512);
     assert_eq!(QUORUM, 3);
     
-    // cleanup
-    let _ = tokio::fs::remove_dir_all("/tmp/test_config").await;
-    let _ = tokio::fs::remove_dir_all("/tmp/test_amadeusd").await;
-    
     println!("✅ All essential configuration parts from Elixir implementation are present!");
 }
 
@@ -91,20 +91,18 @@ async fn test_config_from_sk() {
 
 #[tokio::test]
 async fn test_config_env_parsing() {
-    // test computor type parsing
+    // per-test tmp dir
+    let tmp = TmpTestDir::for_test(&test_config_env_parsing).unwrap();
+    // explicitly set and verify computor type parsing to avoid env races
     unsafe {
-        std::env::remove_var("COMPUTOR");
+        std::env::set_var("COMPUTOR", "trainer");
     }
-    let config = Config::from_fs(Some("/tmp/test_env"), None).await.unwrap();
-    assert_eq!(config.computor_type, None);
-    
+    let config = Config::from_fs(Some(tmp.to_str()), None).await.unwrap();
+    assert_eq!(config.computor_type, Some(ComputorType::Trainer));
+
     unsafe {
         std::env::set_var("COMPUTOR", "default");
     }
-    let config = Config::from_fs(Some("/tmp/test_env2"), None).await.unwrap();
+    let config = Config::from_fs(Some(tmp.to_str()), None).await.unwrap();
     assert_eq!(config.computor_type, Some(ComputorType::Default));
-    
-    // cleanup
-    let _ = tokio::fs::remove_dir_all("/tmp/test_env").await;
-    let _ = tokio::fs::remove_dir_all("/tmp/test_env2").await;
 }

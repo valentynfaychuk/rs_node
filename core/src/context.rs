@@ -330,6 +330,8 @@ mod tests {
         // try to acquire another read without await; should succeed when a read lock is already held
         let r2 = lock.try_read();
         assert!(r2.is_ok(), "try_read should succeed when another reader holds the lock");
+        // drop the second read guard before attempting a write to avoid deadlock
+        drop(r2);
         drop(r1);
 
         // now ensure we can write exclusively after dropping readers
