@@ -5,7 +5,7 @@ use crate::consensus::consensus::{get_chain_tip_entry, get_rooted_tip_entry};
 use crate::consensus::entry::{Entry, EntrySummary};
 use crate::consensus::tx;
 use crate::consensus::{DST_NODE, attestation, entry};
-use crate::node::msg_v2;
+use crate::node::{msg_v2, anr};
 use crate::node::msg_v2::MessageV2;
 use crate::utils::misc::Typename;
 use crate::utils::misc::{TermExt, TermMap, get_unix_millis_now, get_unix_nanos_now};
@@ -13,7 +13,7 @@ use crate::utils::reed_solomon::ReedSolomonResource;
 use crate::utils::{bls12_381 as bls, reed_solomon};
 use crate::{Context, config};
 use eetf::convert::TryAsRef;
-use eetf::{Atom, Binary, DecodeError as EtfDecodeError, EncodeError as EtfEncodeError, List, Map, Term};
+use eetf::{Atom, Binary, DecodeError as EtfDecodeError, EncodeError as EtfEncodeError, FixInteger, List, Map, Term};
 use miniz_oxide::deflate::{CompressionLevel, compress_to_vec};
 use miniz_oxide::inflate::{DecompressError, decompress_to_vec};
 use std::collections::HashMap;
@@ -56,6 +56,8 @@ pub enum Error {
     ReedSolomon(#[from] reed_solomon::Error),
     #[error(transparent)]
     MsgV2(#[from] msg_v2::Error),
+    #[error(transparent)]
+    Anr(#[from] anr::Error),
     #[error("failed to decompress: {0}")]
     Decompress(DecompressError),
     #[error("bad etf: {0}")]
@@ -94,6 +96,9 @@ pub enum Instruction {
     SpecialBusinessReply { business: Vec<u8> },
     SolicitEntry { hash: Vec<u8> },
     SolicitEntry2,
+    ReplyWhatChallenge { anr: anr::ANR, challenge: u64 },
+    ReceivedWhatResponse { responder_anr: anr::ANR, challenge: u64, their_signature: Vec<u8> },
+    HandshakeComplete { anr: anr::ANR },
 }
 
 /// Does proto parsing and validation
@@ -113,6 +118,8 @@ pub fn from_etf_bin(bin: &[u8]) -> Result<Box<dyn Protocol>, Error> {
         Solution::NAME => Box::new(Solution::from_etf_map_validated(map)?),
         TxPool::NAME => Box::new(TxPool::from_etf_map_validated(map)?),
         Peers::NAME => Box::new(Peers::from_etf_map_validated(map)?),
+        NewPhoneWhoDis::NAME => Box::new(NewPhoneWhoDis::from_etf_map_validated(map)?),
+        What::NAME => Box::new(What::from_etf_map_validated(map)?),
         _ => {
             warn!("Unknown operation: {}", op_atom.name);
             return Err(Error::BadEtf("op"));
@@ -190,6 +197,19 @@ pub struct SolicitEntry {
 
 #[derive(Debug)]
 pub struct SolicitEntry2;
+
+#[derive(Debug)]
+pub struct NewPhoneWhoDis {
+    pub anr: Vec<u8>,  // packed ANR binary
+    pub challenge: u64,
+}
+
+#[derive(Debug)]
+pub struct What {
+    pub anr: Vec<u8>,  // packed ANR binary
+    pub challenge: u64,
+    pub signature: Vec<u8>,
+}
 
 impl Typename for Ping {
     fn typename(&self) -> &'static str {
@@ -660,6 +680,188 @@ impl Ping {
         let term = Term::from(Map { map: m });
         let mut etf_data = Vec::new();
         term.encode(&mut etf_data).map_err(Error::EtfEncode)?;
+        let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
+        Ok(compressed)
+    }
+}
+
+impl Typename for NewPhoneWhoDis {
+    fn typename(&self) -> &'static str {
+        Self::NAME
+    }
+}
+
+#[async_trait::async_trait]
+impl Protocol for NewPhoneWhoDis {
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
+        let anr = map.get_binary::<Vec<u8>>("anr").ok_or(Error::BadEtf("anr"))?;
+        let challenge = map.get_integer("challenge").ok_or(Error::BadEtf("challenge"))?;
+        Ok(Self { anr, challenge })
+    }
+
+    async fn handle_inner(&self) -> Result<Instruction, Error> {
+        // deserialize the sender's ANR from binary
+        let anr_term = Term::decode(&self.anr[..])?;
+        let anr_map = anr_term.get_term_map().ok_or(Error::BadEtf("anr_map"))?;
+        
+        // extract ANR fields
+        let ip4_bytes = anr_map.get_binary::<Vec<u8>>("ip4").ok_or(Error::BadEtf("ip4"))?;
+        let pk = anr_map.get_binary::<Vec<u8>>("pk").ok_or(Error::BadEtf("pk"))?;
+        let pop = anr_map.get_binary::<Vec<u8>>("pop").ok_or(Error::BadEtf("pop"))?;
+        let port = anr_map.get_integer::<u16>("port").ok_or(Error::BadEtf("port"))?;
+        let signature = anr_map.get_binary::<Vec<u8>>("signature").ok_or(Error::BadEtf("signature"))?;
+        let ts = anr_map.get_integer::<u64>("ts").ok_or(Error::BadEtf("ts"))?;
+        let version_bytes = anr_map.get_binary::<Vec<u8>>("version").ok_or(Error::BadEtf("version"))?;
+        let version = String::from_utf8_lossy(&version_bytes).to_string();
+        
+        // convert ip4 bytes to Ipv4Addr
+        if ip4_bytes.len() != 4 {
+            return Err(Error::BadEtf("ip4_len"));
+        }
+        let ip4 = std::net::Ipv4Addr::new(ip4_bytes[0], ip4_bytes[1], ip4_bytes[2], ip4_bytes[3]);
+        
+        let sender_anr = anr::ANR {
+            ip4,
+            pk,
+            pop,
+            port,
+            signature,
+            ts,
+            version,
+            handshaked: false,
+            hasChainPop: false,
+            error: None,
+            error_tries: 0,
+            next_check: ts + 3,
+        };
+
+        // validate ANR signature
+        if !sender_anr.verify_signature() {
+            return Ok(Instruction::Noop);
+        }
+
+        // Return instruction to reply with What message
+        // The handler will need to sign: sender_pk || challenge with OUR private key
+        Ok(Instruction::ReplyWhatChallenge { anr: sender_anr, challenge: self.challenge })
+    }
+}
+
+impl NewPhoneWhoDis {
+    pub const NAME: &'static str = "new_phone_who_dis";
+
+    pub fn new(anr: anr::ANR, challenge: u64) -> Result<Self, Error> {
+        // pack ANR to binary
+        let anr_binary = anr.to_etf_binary()?;
+        Ok(Self { anr: anr_binary, challenge })
+    }
+
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("anr")), Term::Binary(Binary::from(self.anr.clone())));
+        m.insert(Term::Atom(Atom::from("challenge")), Term::FixInteger(FixInteger::from(self.challenge as i32)));
+
+        let term = Term::from(Map { map: m });
+        let mut etf_data = Vec::new();
+        term.encode(&mut etf_data).map_err(Error::EtfEncode)?;
+
+        // compress to be symmetric with from_etf_bin
+        let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
+        Ok(compressed)
+    }
+}
+
+impl Typename for What {
+    fn typename(&self) -> &'static str {
+        Self::NAME
+    }
+}
+
+#[async_trait::async_trait]
+impl Protocol for What {
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
+        let anr = map.get_binary::<Vec<u8>>("anr").ok_or(Error::BadEtf("anr"))?;
+        let challenge = map.get_integer("challenge").ok_or(Error::BadEtf("challenge"))?;
+        let signature = map.get_binary::<Vec<u8>>("signature").ok_or(Error::BadEtf("signature"))?;
+        Ok(Self { anr, challenge, signature })
+    }
+
+    async fn handle_inner(&self) -> Result<Instruction, Error> {
+        // deserialize the responder's ANR from binary (this is THEIR ANR, not ours)
+        let anr_term = Term::decode(&self.anr[..])?;
+        let anr_map = anr_term.get_term_map().ok_or(Error::BadEtf("anr_map"))?;
+        
+        // extract ANR fields (responder's ANR)
+        let ip4_bytes = anr_map.get_binary::<Vec<u8>>("ip4").ok_or(Error::BadEtf("ip4"))?;
+        let pk = anr_map.get_binary::<Vec<u8>>("pk").ok_or(Error::BadEtf("pk"))?;
+        let pop = anr_map.get_binary::<Vec<u8>>("pop").ok_or(Error::BadEtf("pop"))?;
+        let port = anr_map.get_integer::<u16>("port").ok_or(Error::BadEtf("port"))?;
+        let signature_anr = anr_map.get_binary::<Vec<u8>>("signature").ok_or(Error::BadEtf("signature"))?;
+        let ts = anr_map.get_integer::<u64>("ts").ok_or(Error::BadEtf("ts"))?;
+        let version_bytes = anr_map.get_binary::<Vec<u8>>("version").ok_or(Error::BadEtf("version"))?;
+        let version = String::from_utf8_lossy(&version_bytes).to_string();
+        
+        // convert ip4 bytes to Ipv4Addr
+        if ip4_bytes.len() != 4 {
+            return Err(Error::BadEtf("ip4_len"));
+        }
+        let ip4 = std::net::Ipv4Addr::new(ip4_bytes[0], ip4_bytes[1], ip4_bytes[2], ip4_bytes[3]);
+        
+        let responder_anr = anr::ANR {
+            ip4,
+            pk: pk.clone(),
+            pop,
+            port,
+            signature: signature_anr,
+            ts,
+            version,
+            handshaked: false,
+            hasChainPop: false,
+            error: None,
+            error_tries: 0,
+            next_check: ts + 3,
+        };
+
+        // validate the responder's ANR signature
+        if !responder_anr.verify_signature() {
+            return Ok(Instruction::Noop);
+        }
+
+        // The What message contains:
+        // - anr: responder's ANR
+        // - challenge: our challenge echoed back (should match what we stored when we sent new_phone_who_dis)
+        // - signature: BLS(our_pk || challenge) signed with responder's private key
+        // We need our own pk to verify, which we get from the context at higher level
+        
+        Ok(Instruction::ReceivedWhatResponse { 
+            responder_anr: responder_anr, 
+            challenge: self.challenge,
+            their_signature: self.signature.clone()
+        })
+    }
+}
+
+impl What {
+    pub const NAME: &'static str = "what?";
+
+    pub fn new(anr: anr::ANR, challenge: u64, signature: Vec<u8>) -> Result<Self, Error> {
+        // pack ANR to binary
+        let anr_binary = anr.to_etf_binary()?;
+        Ok(Self { anr: anr_binary, challenge, signature })
+    }
+
+    pub fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("anr")), Term::Binary(Binary::from(self.anr.clone())));
+        m.insert(Term::Atom(Atom::from("challenge")), Term::FixInteger(FixInteger::from(self.challenge as i32)));
+        m.insert(Term::Atom(Atom::from("signature")), Term::Binary(Binary::from(self.signature.clone())));
+
+        let term = Term::from(Map { map: m });
+        let mut etf_data = Vec::new();
+        term.encode(&mut etf_data).map_err(Error::EtfEncode)?;
+
+        // compress to be symmetric with from_etf_bin
         let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
         Ok(compressed)
     }

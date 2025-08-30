@@ -215,6 +215,11 @@ impl ANR {
             next_check: 0,
         }
     }
+
+    // convert ANR to ETF binary format for protocol transmission
+    pub fn to_etf_binary(&self) -> Result<Vec<u8>, Error> {
+        self.to_erlang_term_binary()
+    }
 }
 
 // storage functions using scc hashmap

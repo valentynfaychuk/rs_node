@@ -2,11 +2,13 @@ use crate::node::protocol::Protocol;
 use crate::node::{NodeState, anr, peers};
 use crate::utils::misc::get_unix_secs_now;
 use crate::{Error, config, metrics, node};
+use rand::random;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Reads UDP datagram and silently does parsing, validation and reassembly
 /// If the protocol message is complete, returns Some(Protocol)
@@ -111,37 +113,56 @@ impl Context {
         anr::seed(seed_anrs, &my_sk, &my_pk, &my_pop, config.get_ver(), Some(my_ip))?;
         peers::seed(my_ip)?;
 
-        // send initial bootstrap ping to seed nodes (Elixir-like bootstrapping)
+        // send initial bootstrap handshake to seed nodes (new_phone_who_dis)
         {
             let boot_cfg = config.clone();
             let seed_ips = config.seed_nodes.clone();
             tokio::spawn(async move {
-                use crate::consensus::consensus::{get_chain_tip_entry, get_rooted_tip_entry};
-                use crate::consensus::entry::EntrySummary;
-                use crate::node::protocol::Ping;
+                use crate::node::protocol::NewPhoneWhoDis;
+                use rand::Rng;
                 use tokio::net::UdpSocket;
                 use tracing::info;
 
-                let temporal_opt: Option<EntrySummary> = match get_chain_tip_entry() {
-                    Ok(Some(entry)) => Some(entry.into()),
-                    _ => None,
-                };
-                let rooted_opt: Option<EntrySummary> = match get_rooted_tip_entry() {
-                    Ok(Some(entry)) => Some(entry.into()),
-                    _ => None,
+                // create our own ANR for the handshake
+                let my_ip = boot_cfg
+                    .public_ipv4
+                    .as_ref()
+                    .and_then(|s| s.parse::<std::net::Ipv4Addr>().ok())
+                    .unwrap_or_else(|| std::net::Ipv4Addr::new(127, 0, 0, 1));
+
+                let my_anr = match anr::ANR::build(
+                    &boot_cfg.trainer_sk,
+                    &boot_cfg.trainer_pk,
+                    &boot_cfg.trainer_pop,
+                    my_ip,
+                    boot_cfg.get_ver(),
+                ) {
+                    Ok(anr) => anr,
+                    Err(_) => return,
                 };
 
-                let payload = match Ping::build_compressed_payload_optional(temporal_opt, rooted_opt, None) {
+                // generate a random challenge
+                let challenge = random::<u64>();
+
+                // create NewPhoneWhoDis message
+                let new_phone_who_dis = match NewPhoneWhoDis::new(my_anr, challenge) {
+                    Ok(msg) => msg,
+                    Err(_) => return,
+                };
+
+                // serialize to compressed ETF binary
+                let payload = match new_phone_who_dis.to_etf_bin() {
                     Ok(p) => p,
                     Err(_) => return,
                 };
 
+                // build shards for transmission
                 if let Ok(shards) = node::ReedSolomonReassembler::build_shards(&boot_cfg, payload) {
                     if let Ok(sock) = UdpSocket::bind("0.0.0.0:0").await {
                         for ip in seed_ips {
                             let addr = format!("{}:{}", ip, 36969);
                             if let Ok(target) = addr.parse::<std::net::SocketAddr>() {
-                                info!(%addr, count = shards.len(), "sending bootstrap ping");
+                                info!(%addr, count = shards.len(), challenge, "sending bootstrap new_phone_who_dis");
                                 for shard in &shards {
                                     let _ = sock.send_to(shard, target).await;
                                 }
@@ -163,9 +184,7 @@ impl Context {
                 ticker.tick().await;
                 reassembler_ref.clear_stale(CLEANUP_SECS);
                 // Run peer cleanup in blocking task to avoid runtime starvation
-                let _ = tokio::task::spawn_blocking(move || {
-                    peers::clear_stale()
-                }).await;
+                let _ = tokio::task::spawn_blocking(move || peers::clear_stale()).await;
             }
         });
 
@@ -210,13 +229,19 @@ impl Context {
                 }
             }
             result
-        }).await.unwrap_or_default();
-        
+        })
+        .await
+        .unwrap_or_default();
+
         result
     }
 
     pub fn get_node_state(&self) -> Arc<RwLock<NodeState>> {
         Arc::clone(&self.node_state)
+    }
+
+    pub fn get_config(&self) -> &config::Config {
+        &self.config
     }
 
     pub async fn get_entries(&self) -> Vec<String> {
@@ -286,5 +311,30 @@ impl Context {
                 }
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tokio_rwlock_allows_concurrent_reads() {
+        // set up a tokio RwLock and verify concurrent read access without awaiting while holding a guard
+        let lock = tokio::sync::RwLock::new(0usize);
+
+        // acquire first read
+        let r1 = lock.read().await;
+        assert_eq!(*r1, 0);
+        // try to acquire another read without await; should succeed when a read lock is already held
+        let r2 = lock.try_read();
+        assert!(r2.is_ok(), "try_read should succeed when another reader holds the lock");
+        drop(r1);
+
+        // now ensure we can write exclusively after dropping readers
+        let mut w = lock.write().await;
+        *w += 1;
+        assert_eq!(*w, 1);
     }
 }
