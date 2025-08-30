@@ -119,7 +119,6 @@ impl Context {
             let seed_ips = config.seed_nodes.clone();
             tokio::spawn(async move {
                 use crate::node::protocol::NewPhoneWhoDis;
-                use rand::Rng;
                 use tokio::net::UdpSocket;
                 use tracing::info;
 
@@ -317,7 +316,6 @@ impl Context {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn tokio_rwlock_allows_concurrent_reads() {

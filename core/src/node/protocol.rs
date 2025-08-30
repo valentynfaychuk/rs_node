@@ -272,7 +272,7 @@ impl Ping {
         let ts_nano = get_unix_nanos_now() as u64;
 
         let original_size = compressed_payload.len() as u32;
-        let version = "1.1.5".to_string();
+        let version = config.get_ver();
 
         // for single shard (no Reed-Solomon needed)
         let shard_index = 0;
@@ -335,7 +335,7 @@ impl Ping {
             .unwrap_or(0);
 
         let original_size = compressed_payload.len() as u32;
-        let version = "1.1.5".to_string();
+        let version = config.get_ver();
 
         // for single shard (no Reed-Solomon needed)
         let shard_index = 0;
@@ -387,7 +387,7 @@ impl Ping {
         let ts_nano = get_unix_nanos_now() as u64; // TODO: check if this is fine
 
         let original_size = compressed_payload.len() as u32;
-        let version = "1.1.5".to_string();
+        let version = config.get_ver();
         let total_shards = (shards.len() * 2) as u16; // total shards * 2 as per protocol
 
         let mut packets = Vec::new();

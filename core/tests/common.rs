@@ -24,6 +24,7 @@ impl TmpTestDir {
     }
 
     /// Access the created directory path.
+    #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         &self.path
     }

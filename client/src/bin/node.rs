@@ -149,7 +149,7 @@ async fn handle_instruction(ctx: &Context, instruction: Instruction, src: Socket
             anr::set_handshaked(&anr.pk)?;
         }
 
-        Instruction::ReplyPong { ts_m } => {
+        Instruction::ReplyPong { ts_m: _ } => {
             // handle pong reply (existing functionality)
         }
 

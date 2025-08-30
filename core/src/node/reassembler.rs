@@ -75,10 +75,7 @@ impl ReedSolomonReassembler {
     }
 
     /// Creates signed MessageV2 shards from payload
-    pub fn build_shards(
-        config: &crate::config::Config,
-        payload: Vec<u8>,
-    ) -> Result<Vec<Vec<u8>>, Error> {
+    pub fn build_shards(config: &crate::config::Config, payload: Vec<u8>) -> Result<Vec<Vec<u8>>, Error> {
         let pk = config.get_pk();
         let trainer_sk = config.get_sk();
         let ts_nano = get_unix_nanos_now() as u64;
@@ -95,17 +92,8 @@ impl ReedSolomonReassembler {
         // reference: if byte_size(msg_compressed) < 1300, single shard
         if payload.len() < 1300 {
             return Ok(vec![
-                MessageV2 {
-                    version: version.to_string(),
-                    pk,
-                    signature,
-                    shard_index: 0,
-                    shard_total: 1,
-                    ts_nano,
-                    original_size,
-                    payload,
-                }
-                .try_into()?,
+                MessageV2 { version, pk, signature, shard_index: 0, shard_total: 1, ts_nano, original_size, payload }
+                    .try_into()?,
             ]);
         }
 
@@ -311,7 +299,7 @@ mod tests {
     async fn test_message_v2_roundtrip_small() {
         // test small message (single shard)
         let payload = b"hello world".to_vec();
-        let version = "1.1.5";
+        let version = "1.1.6";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert_eq!(messages.len(), 1);
@@ -328,7 +316,7 @@ mod tests {
     async fn test_message_v2_roundtrip_large() {
         // test large message (multiple shards)
         let payload = vec![42u8; 3000]; // larger than 1300 bytes
-        let version = "1.1.5";
+        let version = "1.1.6";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert!(messages.len() > 1);
@@ -363,7 +351,7 @@ mod tests {
     async fn test_message_v2_partial_shards() {
         // test that we can recover with missing shards
         let payload = vec![123u8; 4000];
-        let version = "1.1.5";
+        let version = "1.1.6";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert!(messages.len() > 2);
