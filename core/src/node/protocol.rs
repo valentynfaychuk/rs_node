@@ -1,7 +1,7 @@
 use crate::bic::sol;
 use crate::bic::sol::Solution;
 use crate::consensus::attestation::AttestationBulk;
-use crate::consensus::consensus::{get_chain_rooted_tip_entry, get_chain_tip_entry};
+use crate::consensus::consensus::{get_chain_tip_entry, get_rooted_tip_entry};
 use crate::consensus::entry::{Entry, EntrySummary};
 use crate::consensus::tx;
 use crate::consensus::{DST_NODE, attestation, entry};
@@ -232,7 +232,7 @@ impl Ping {
         };
 
         // rooted summary
-        let rooted = match get_chain_rooted_tip_entry() {
+        let rooted = match get_rooted_tip_entry() {
             Ok(Some(entry)) => entry.into(),
             _ => return Err(Error::BadEtf("rooted_tip")),
         };
@@ -252,15 +252,18 @@ impl Ping {
         let ts_nano = get_unix_nanos_now() as u64;
 
         let original_size = compressed_payload.len() as u32;
-        let version = "1.1.2".to_string();
+        let version = "1.1.5".to_string();
 
         // for single shard (no Reed-Solomon needed)
         let shard_index = 0;
-        let shard_total = 2; // total shards * 2 as per protocol
+        let shard_total = 1;
 
-        // create message to sign: compressed payload
-        let signature =
-            bls::sign(&trainer_sk, &compressed_payload, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
+        // create message signature over blake3(pk || payload)
+        let mut hasher = crate::utils::blake3::Hasher::new();
+        hasher.update(&pk);
+        hasher.update(&compressed_payload);
+        let msg_hash = hasher.finalize();
+        let signature = bls::sign(&trainer_sk, &msg_hash, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
 
         Ok(MessageV2 {
             version,
@@ -312,15 +315,18 @@ impl Ping {
             .unwrap_or(0);
 
         let original_size = compressed_payload.len() as u32;
-        let version = "1.1.2".to_string();
+        let version = "1.1.5".to_string();
 
         // for single shard (no Reed-Solomon needed)
         let shard_index = 0;
-        let shard_total = 2; // total shards * 2 as per protocol
+        let shard_total = 1;
 
-        // create message to sign: compressed payload
-        let signature =
-            bls::sign(&trainer_sk, &compressed_payload, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
+        // create message signature over blake3(pk || payload)
+        let mut hasher = crate::utils::blake3::Hasher::new();
+        hasher.update(&pk);
+        hasher.update(&compressed_payload);
+        let msg_hash = hasher.finalize();
+        let signature = bls::sign(&trainer_sk, &msg_hash, DST_NODE).map_err(|_| Error::BadEtf("signing_failed"))?;
 
         Ok(MessageV2 {
             version,
@@ -361,7 +367,7 @@ impl Ping {
         let ts_nano = get_unix_nanos_now() as u64; // TODO: check if this is fine
 
         let original_size = compressed_payload.len() as u32;
-        let version = "1.1.2".to_string();
+        let version = "1.1.5".to_string();
         let total_shards = (shards.len() * 2) as u16; // total shards * 2 as per protocol
 
         let mut packets = Vec::new();
@@ -618,5 +624,43 @@ mod tests {
         };
 
         EntrySummary { header, signature: [5u8; 96], mask: None }
+    }
+}
+
+
+impl Ping {
+    /// Build compressed ETF payload for Ping with optional tips.
+    /// When temporal/rooted are None, emits empty maps (Elixir-compatible bootstrap behavior).
+    /// If ts_m is None, uses current unix millis.
+    pub fn build_compressed_payload_optional(
+        temporal: Option<EntrySummary>,
+        rooted: Option<EntrySummary>,
+        ts_m: Option<u128>,
+    ) -> Result<Vec<u8>, Error> {
+        let empty_map = Term::from(Map { map: HashMap::new() });
+        let temporal_term = match temporal {
+            Some(es) => es.to_etf_term()?,
+            None => empty_map.clone(),
+        };
+        let rooted_term = match rooted {
+            Some(es) => es.to_etf_term()?,
+            None => empty_map.clone(),
+        };
+
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Self::NAME)));
+        m.insert(Term::Atom(Atom::from("temporal")), temporal_term);
+        m.insert(Term::Atom(Atom::from("rooted")), rooted_term);
+        let ts = ts_m.unwrap_or_else(get_unix_millis_now);
+        m.insert(
+            Term::Atom(Atom::from("ts_m")),
+            Term::from(eetf::BigInteger { value: ts.into() }),
+        );
+
+        let term = Term::from(Map { map: m });
+        let mut etf_data = Vec::new();
+        term.encode(&mut etf_data).map_err(Error::EtfEncode)?;
+        let compressed = compress_to_vec(&etf_data, CompressionLevel::DefaultLevel as u8);
+        Ok(compressed)
     }
 }

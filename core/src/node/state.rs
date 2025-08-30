@@ -132,13 +132,13 @@ impl NodeState {
         }
 
         // TODO: Get trainer keys from config
-        let trainer_sk = vec![0u8; 32]; // placeholder
+        let _trainer_sk = vec![0u8; 32]; // placeholder
         let trainer_pk = vec![0u8; 48]; // placeholder
 
         // Sign challenge
         // TODO: Implement BLS signing
-        let challenge_msg = [trainer_pk.clone(), challenge.to_le_bytes().to_vec()].concat();
-        let signature = vec![0u8; 96]; // placeholder signature
+        let _challenge_msg = [trainer_pk.clone(), challenge.to_le_bytes().to_vec()].concat();
+        let _signature = vec![0u8; 96]; // placeholder signature
 
         // Store ANR
         anr::insert(verified_anr)?;
@@ -426,8 +426,8 @@ impl NodeState {
         tracing::debug!("Catchup bi request for {} heights from {}", heights.len(), peer.ip);
 
         // TODO: Get attestations and consensuses by height
-        let mut attestations_packed: Vec<u8> = Vec::new();
-        let mut consensuses_packed: Vec<u8> = Vec::new();
+        let attestations_packed: Vec<u8> = Vec::new();
+        let consensuses_packed: Vec<u8> = Vec::new();
 
         for height in heights {
             tracing::debug!("Getting bi data for height {}", height);
@@ -460,9 +460,9 @@ impl NodeState {
 
         tracing::debug!("Catchup attestation request for {} hashes from {}", hashes.len(), peer.ip);
 
-        let mut attestations_packed: Vec<u8> = Vec::new();
+        let attestations_packed: Vec<u8> = Vec::new();
 
-        for hash in hashes {
+        for _hash in hashes {
             tracing::debug!("Getting attestation for hash");
             // TODO: fabric::my_attestation_by_entryhash(hash)
             // TODO: Pack attestation if found
@@ -497,7 +497,7 @@ impl NodeState {
                         // TODO: Get trainer PK from config
                         let trainer_pk = vec![0u8; 48]; // placeholder
 
-                        let reply = SpecialBusinessReply {
+                        let _reply = SpecialBusinessReply {
                             op: "slash_trainer_tx_reply".to_string(),
                             epoch: Some(epoch),
                             malicious_pk: Some(malicious_pk),
@@ -512,7 +512,7 @@ impl NodeState {
                 }
             }
             "slash_trainer_entry" => {
-                if let Some(entry_packed) = business.entry_packed {
+                if let Some(_entry_packed) = business.entry_packed {
                     // TODO: Unpack entry and get hash
                     // TODO: SpecialMeetingAttestGen::maybe_attest("slash_trainer_entry", entry_packed)
                     tracing::debug!("Slash trainer entry request");
@@ -523,7 +523,7 @@ impl NodeState {
                         let trainer_pk = vec![0u8; 48]; // placeholder
                         let entry_hash = vec![0u8; 32]; // placeholder - get from unpacked entry
 
-                        let reply = SpecialBusinessReply {
+                        let _reply = SpecialBusinessReply {
                             op: "slash_trainer_entry_reply".to_string(),
                             epoch: None,
                             malicious_pk: None,
@@ -561,7 +561,7 @@ impl NodeState {
                 }
             }
             "slash_trainer_entry_reply" => {
-                if let Some(entry_hash) = business.entry_hash {
+                if let Some(_entry_hash) = business.entry_hash {
                     // TODO: Verify signature against entry hash
                     // TODO: Send to SpecialMeetingGen
                     tracing::debug!("Slash trainer entry reply for hash");
@@ -576,7 +576,7 @@ impl NodeState {
     }
 
     /// Handle solicit_entry message
-    async fn handle_solicit_entry(&mut self, hash: Vec<u8>, peer: &PeerInfo) -> Result<Option<Vec<u8>>, Error> {
+    async fn handle_solicit_entry(&mut self, _hash: Vec<u8>, peer: &PeerInfo) -> Result<Option<Vec<u8>>, Error> {
         tracing::debug!("Solicit entry request from {}", peer.ip);
 
         // TODO: Get entry by hash
@@ -614,7 +614,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_txpool() {
         let mut state = NodeState::init();
-        let peer = PeerInfo { ip: Ipv4Addr::new(127, 0, 0, 1), signer: vec![1, 2, 3], version: "1.0.0".to_string() };
+        let _peer = PeerInfo { ip: Ipv4Addr::new(127, 0, 0, 1), signer: vec![1, 2, 3], version: "1.0.0".to_string() };
 
         let txs = vec![vec![1, 2, 3], vec![4, 5, 6]];
         let result = state.handle_txpool(txs).await;

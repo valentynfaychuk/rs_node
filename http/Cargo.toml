@@ -1,5 +1,5 @@
 [package]
-name = "http"
+name = "dashboard"
 version = "0.1.0"
 edition = "2024"
 
@@ -17,5 +17,7 @@ tokio-stream = "0.1"
 async-stream = "0.3"
 futures-core = "0.3"
 anyhow = "1.0.98"
-tower-http = { version = "0.6", features = ["fs"] }
-ama_core = { path = "../core" }
+tracing = "0.1"
+    tower = { version = "0.5", features = ["timeout"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "timeout"] }
+    ama_core = { path = "../core" }

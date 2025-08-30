@@ -1,4 +1,4 @@
-use client::{DumpReplaySocket, PING, get_http_port, get_peer_addr, init_tracing};
+use client::{DumpReplaySocket, get_http_port, init_tracing};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, UdpSocket};
@@ -29,7 +29,6 @@ async fn main() -> anyhow::Result<()> {
     let ctx_udp = ctx.clone();
     let udp = spawn(async move {
         let socket = UdpSocket::bind("0.0.0.0:36969").await.expect("bind udp");
-        socket.send_to(&PING, &get_peer_addr()).await.expect("send ping");
 
         println!("udp listening on 36969"); // port must always be 36969
         if let Err(e) = recv_loop(socket, ctx_udp).await {
@@ -48,7 +47,7 @@ async fn recv_loop(socket: UdpSocket, ctx: Arc<Context>) -> anyhow::Result<()> {
 
     loop {
         match timeout(timeout_secs, socket.dump_replay_recv_from(&mut buf)).await {
-            Err(_) => println!("{}", ctx.get_prometheus_metrics()), // timeout
+            Err(_) => {} // timeout
             Ok(Err(e)) => return Err(e.into()),
             Ok(Ok((len, src))) => match read_udp_packet(&ctx, src, &buf[..len]).await {
                 Some(proto) => {

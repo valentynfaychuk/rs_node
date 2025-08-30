@@ -78,8 +78,7 @@ impl NodePeers {
 
         // Get validators for current height + 1
         let height = consensus::chain_height();
-        let validators = consensus::trainers_for_height(height + 1)
-            .ok_or_else(|| Error::ConsensusError("Failed to get trainers for height".to_string()))?;
+        let validators = consensus::trainers_for_height(height + 1).unwrap_or_default();
         let validators: Vec<Vec<u8>> = validators.iter().map(|pk| pk.to_vec()).collect();
 
         let validator_anr_ips = anr::by_pks_ip(&validators)?;
@@ -161,8 +160,7 @@ impl NodePeers {
     /// Seed initial peers with validators
     pub fn seed(&self, my_ip: Ipv4Addr) -> Result<(), Error> {
         let height = consensus::chain_height();
-        let validators = consensus::trainers_for_height(height + 1)
-            .ok_or_else(|| Error::ConsensusError("Failed to get trainers for height".to_string()))?;
+        let validators = consensus::trainers_for_height(height + 1).unwrap_or_default();
         let validators: Vec<Vec<u8>> = validators.iter().map(|pk| pk.to_vec()).collect();
 
         let validator_ips: Vec<_> = anr::by_pks_ip(&validators)?.into_iter().filter(|ip| *ip != my_ip).collect();
@@ -222,7 +220,7 @@ impl NodePeers {
         let mut online_peers = Vec::new();
 
         self.peers.scan(|_, peer| {
-            if Self::is_online(peer) {
+            if Self::is_online(peer, None) {
                 online_peers.push(peer.clone());
             }
         });
@@ -231,7 +229,7 @@ impl NodePeers {
     }
 
     /// Check if a peer is online
-    pub fn is_online(peer: &Peer) -> bool {
+    pub fn is_online(peer: &Peer, trainer_pk: Option<&[u8]>) -> bool {
         let ts_m = get_unix_millis_now() as u64;
 
         match (&peer.pk, peer.last_ping) {
@@ -239,12 +237,9 @@ impl NodePeers {
             (Some(_), None) => false,
             (Some(pk), Some(last_ping)) => {
                 // Check if this is our own trainer PK (always online)
-                // TODO: get from config instead of env var
-                if let Ok(trainer_pk) = std::env::var("TRAINER_PK") {
-                    if let Ok(trainer_pk_bytes) = bs58::decode(trainer_pk).into_vec() {
-                        if *pk == trainer_pk_bytes {
-                            return true;
-                        }
+                if let Some(my_trainer_pk) = trainer_pk {
+                    if pk == my_trainer_pk {
+                        return true;
                     }
                 }
 
@@ -257,8 +252,7 @@ impl NodePeers {
     /// Get all trainer peers for given height
     pub fn all_trainers(&self, height: Option<u64>) -> Result<Vec<Peer>, Error> {
         let height = height.unwrap_or_else(|| consensus::chain_height());
-        let pks = consensus::trainers_for_height(height + 1)
-            .ok_or_else(|| Error::ConsensusError("Failed to get trainers for height".to_string()))?;
+        let pks = consensus::trainers_for_height(height + 1).unwrap_or_default();
         let pks: Vec<Vec<u8>> = pks.iter().map(|pk| pk.to_vec()).collect();
 
         let mut trainers = Vec::new();
@@ -384,8 +378,7 @@ impl NodePeers {
 
     /// Get peers for a specific height (trainers)
     pub fn for_height(&self, height: u64) -> Result<Vec<Peer>, Error> {
-        let trainers = consensus::trainers_for_height(height)
-            .ok_or_else(|| Error::ConsensusError("Failed to get trainers for height".to_string()))?;
+        let trainers = consensus::trainers_for_height(height).unwrap_or_default();
         let trainers: Vec<Vec<u8>> = trainers.iter().map(|pk| pk.to_vec()).collect();
 
         let trainers_set: std::collections::HashSet<_> = trainers.iter().collect();
@@ -634,7 +627,7 @@ pub fn online() -> Result<Vec<Peer>, Error> {
 
 /// Check if a peer is online using default instance
 pub fn is_online(peer: &Peer) -> bool {
-    NodePeers::is_online(peer)
+    NodePeers::is_online(peer, None)
 }
 
 /// Get all trainer peers using default instance
@@ -744,7 +737,7 @@ mod tests {
 
         // Test is_online
         let retrieved = node_peers.by_ip(ip).unwrap().unwrap();
-        assert!(NodePeers::is_online(&retrieved));
+        assert!(NodePeers::is_online(&retrieved, None));
     }
 
     #[tokio::test]

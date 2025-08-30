@@ -78,12 +78,12 @@ impl ReedSolomonReassembler {
     pub fn build_shards(
         config: &crate::config::Config,
         payload: Vec<u8>,
-        version: &str,
     ) -> Result<Vec<Vec<u8>>, Error> {
         let pk = config.get_pk();
         let trainer_sk = config.get_sk();
         let ts_nano = get_unix_nanos_now() as u64;
         let original_size = payload.len() as u32;
+        let version = config.get_ver();
 
         // sign Blake3(pk || payload) once for the entire message
         let mut hasher = blake3::Hasher::new();
@@ -311,7 +311,7 @@ mod tests {
     async fn test_message_v2_roundtrip_small() {
         // test small message (single shard)
         let payload = b"hello world".to_vec();
-        let version = "1.0.0";
+        let version = "1.1.5";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert_eq!(messages.len(), 1);
@@ -328,7 +328,7 @@ mod tests {
     async fn test_message_v2_roundtrip_large() {
         // test large message (multiple shards)
         let payload = vec![42u8; 3000]; // larger than 1300 bytes
-        let version = "1.0.0";
+        let version = "1.1.5";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert!(messages.len() > 1);
@@ -363,7 +363,7 @@ mod tests {
     async fn test_message_v2_partial_shards() {
         // test that we can recover with missing shards
         let payload = vec![123u8; 4000];
-        let version = "1.0.0";
+        let version = "1.1.5";
 
         let messages = test_build_message_v2(payload.clone(), version).unwrap();
         assert!(messages.len() > 2);

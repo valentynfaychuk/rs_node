@@ -29,7 +29,7 @@ pub fn get_http_port() -> u16 {
 /// Send transaction to network via UDP
 pub async fn send_transaction(config: &Config, tx_packed: Vec<u8>) -> anyhow::Result<()> {
     let payload = TxPool { valid_txs: vec![tx_packed] }.to_etf_bin()?;
-    let shards = ReedSolomonReassembler::build_shards(config, payload, "1.1.1")?;
+    let shards = ReedSolomonReassembler::build_shards(config, payload)?;
     let node_addr = get_peer_addr();
 
     let socket = UdpSocket::bind("0.0.0.0:0").await?; // any available port
