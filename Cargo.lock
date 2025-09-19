@@ -481,6 +481,7 @@ name = "bls12_381"
 version = "0.8.0"
 source = "git+https://github.com/vans163/bls12_381#cb29d44ff3a2539655c95086f8cd2cfb162bc2c2"
 dependencies = [
+ "digest",
  "ff",
  "group",
  "pairing",

@@ -156,7 +156,10 @@ impl Context {
 
         {
             // DEBUG
-            let new_phone_who_dis_reply = NewPhoneWhoDisReply::new(Anr::from_config(&self.config)?);
+            let anr = Anr::from_config(&self.config)?;
+            let anr_bin = anr.to_etf_bin();
+            println!("{anr_bin:?}");
+            let new_phone_who_dis_reply = NewPhoneWhoDisReply::new(anr);
             let ip = "94.130.221.61".parse::<Ipv4Addr>().unwrap();
             new_phone_who_dis_reply.send_to_with_metrics(self, ip).await?;
         }

@@ -1,9 +1,31 @@
 use bls12_381::*;
 use group::Curve;
 
-// we use blst for signing/verification (hash_to_curve with DST) and serialization
-use blst::BLST_ERROR;
+
+// Nuclear option: Pure BLST to match whatever bls_ex uses
 use blst::min_pk::{PublicKey as BlsPublicKey, SecretKey as BlsSecretKey, Signature as BlsSignature};
+
+pub fn sign(sk_bytes: &[u8], message: &[u8], dst: &[u8]) -> Result<[u8; 96], Error> {
+    let sk = if sk_bytes.len() == 64 {
+        BlsSecretKey::key_gen(sk_bytes, &[]).unwrap()
+    } else {
+        BlsSecretKey::from_bytes(sk_bytes).unwrap()
+    };
+
+    let sig = sk.sign(message, dst, &[]);
+    Ok(sig.to_bytes())
+}
+
+pub fn get_public_key(sk_bytes: &[u8]) -> Result<[u8; 48], Error> {
+    let sk = if sk_bytes.len() == 64 {
+        BlsSecretKey::key_gen(sk_bytes, &[]).unwrap()
+    } else {
+        BlsSecretKey::from_bytes(sk_bytes).unwrap()
+    };
+
+    let pk = sk.sk_to_pk();
+    Ok(pk.to_bytes())
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -19,28 +41,6 @@ pub enum Error {
     ZeroSizedInput,
 }
 
-/// Parse a secret key from raw bytes, accepts either 64 or 32 bytes
-/// For 64-byte keys, uses Scalar::from_bytes_wide exactly like Elixir BlsEx
-fn parse_secret_key(sk_bytes: &[u8]) -> Result<BlsSecretKey, Error> {
-    // For 64-byte secret keys: reduce using key_gen to ensure valid BLST key
-    // while maintaining compatibility with Elixir's scalar derivation
-    if let Ok(bytes_64) = <&[u8; 64]>::try_from(sk_bytes) {
-        // Use BLST's key_gen which internally does proper scalar reduction
-        // This ensures the result is always a valid BlsSecretKey
-        return BlsSecretKey::key_gen(bytes_64, &[]).map_err(|e| {
-            eprintln!("BLST key_gen rejected 64-byte key material: {:?}, first_8_bytes: {:?}", e, &bytes_64[..8]);
-            Error::InvalidSecretKey
-        });
-    }
-    // For 32-byte secret keys: use directly as scalar
-    if let Ok(bytes_32) = <&[u8; 32]>::try_from(sk_bytes) {
-        return BlsSecretKey::from_bytes(bytes_32).map_err(|e| {
-            eprintln!("BLST rejected 32-byte secret key: {:?}", e);
-            Error::InvalidSecretKey
-        });
-    }
-    Err(Error::InvalidSecretKey)
-}
 
 fn g1_projective_is_valid(projective: &G1Projective) -> bool {
     let is_identity: bool = projective.is_identity().into();
@@ -91,98 +91,91 @@ fn parse_signature(bytes: &[u8]) -> Result<G2Projective, Error> {
     }
 }
 
-fn sign_from_secret_key(sk: BlsSecretKey, msg: &[u8], dst: &[u8]) -> Result<BlsSignature, Error> {
-    Ok(sk.sign(msg, dst, &[]))
-}
 
 // public API
 
 /// Derive compressed G1 public key (48 bytes) from secret key (32 or 64 bytes)
-/// Uses Scalar::from_bytes_wide for 64-byte keys to match Elixir exactly
-pub fn get_public_key(sk_bytes: &[u8]) -> Result<[u8; 48], Error> {
-    if sk_bytes.len() == 64 {
-        // For 64-byte keys: use bls12_381 directly for full Elixir compatibility
-        let bytes_64: [u8; 64] = sk_bytes.try_into().map_err(|_| Error::InvalidSecretKey)?;
-        let sk_scalar = Scalar::from_bytes_wide(&bytes_64);
-
-        // Compute public key: G1 generator * scalar (exactly like Elixir)
-        let pk_g1 = G1Projective::generator() * sk_scalar;
-        Ok(pk_g1.to_affine().to_compressed())
-    } else {
-        // For 32-byte keys and other operations: use BLST
-        let sk = parse_secret_key(sk_bytes)?;
-        let pk = sk.sk_to_pk();
-        Ok(pk.to_bytes())
-    }
-}
+/// Uses pure bls12_381 implementation for consistency with signing and verification
+// pub fn get_public_key(sk_bytes: &[u8]) -> Result<[u8; 48], Error> {
+//     // Use the same scalar derivation as sign() for consistency
+//     let sk_scalar = if sk_bytes.len() == 64 {
+//         // For 64-byte keys: use bls12_381 directly for full Elixir compatibility
+//         let bytes_64: [u8; 64] = sk_bytes.try_into().map_err(|_| Error::InvalidSecretKey)?;
+//         Scalar::from_bytes_wide(&bytes_64)
+//     } else if sk_bytes.len() == 32 {
+//         // For 32-byte keys: convert to scalar
+//         let bytes_32: [u8; 32] = sk_bytes.try_into().map_err(|_| Error::InvalidSecretKey)?;
+//         Scalar::from_bytes(&bytes_32).into_option().ok_or(Error::InvalidSecretKey)?
+//     } else {
+//         return Err(Error::InvalidSecretKey);
+//     };
+//
+//     // Compute public key: G1 generator * scalar (exactly like Elixir)
+//     let pk_g1 = G1Projective::generator() * sk_scalar;
+//     Ok(pk_g1.to_affine().to_compressed())
+// }
 
 pub fn generate_sk() -> [u8; 64] {
-    // Generate a valid 64-byte secret key that works with our scalar approach
-    // We do this by generating valid 32-byte keys and extending them to 64 bytes
-    loop {
-        let sk_64: [u8; 64] = rand::random();
-
-        // Try to create a scalar from this - if it works, use it
-        let scalar = Scalar::from_bytes_wide(&sk_64);
-        let scalar_bytes = scalar.to_bytes();
-
-        // Check if this creates a valid BLST key
-        if BlsSecretKey::from_bytes(&scalar_bytes).is_ok() {
-            return sk_64;
-        }
-
-        // If it doesn't work, try again (very rare)
-    }
+    // Generate a valid 64-byte secret key that works with pure bls12_381
+    // Any 64-byte array can be used since Scalar::from_bytes_wide handles the reduction
+    rand::random()
 }
 
 /// Sign a message with secret key, returns signature bytes (96 bytes in min_pk)
-/// For 64-byte keys, uses the same scalar derivation as public key generation
-pub fn sign(sk_bytes: &[u8], message: &[u8], dst: &[u8]) -> Result<[u8; 96], Error> {
-    if sk_bytes.len() == 64 {
-        // For 64-byte keys: try BLST first, fall back to bls12_381 for full Elixir compatibility
-        let bytes_64: [u8; 64] = sk_bytes.try_into().map_err(|_| Error::InvalidSecretKey)?;
-        let sk_scalar = Scalar::from_bytes_wide(&bytes_64);
-
-        // Try to convert to BlsSecretKey using the scalar bytes
-        let scalar_bytes = sk_scalar.to_bytes();
-        match BlsSecretKey::from_bytes(&scalar_bytes) {
-            Ok(sk) => {
-                // BLST path: use BLST for signing (works with our generate_sk() keys)
-                let signature = sign_from_secret_key(sk, message, dst)?;
-                Ok(signature.to_bytes())
-            }
-            Err(_) => {
-                // Fallback path: the scalar is not a valid BLST secret key
-                // This happens with some test keys. Since bls12_381 and BLST might be incompatible,
-                // we cannot sign with bls12_381 and verify with BLST.
-                // Return an error to indicate this key cannot be used for signing
-                Err(Error::InvalidSecretKey)
-            }
-        }
-    } else {
-        // For 32-byte keys: use the standard approach
-        let sk = parse_secret_key(sk_bytes)?;
-        let signature = sign_from_secret_key(sk, message, dst)?;
-        Ok(signature.to_bytes())
-    }
-}
+/// Uses pure bls12_381 implementation for complete consistency with Elixir
+// pub fn sign(sk_bytes: &[u8], message: &[u8], dst: &[u8]) -> Result<[u8; 96], Error> {
+//     use bls12_381::hash_to_curve::{ExpandMsgXmd, HashToCurve};
+//     use sha2::Sha256;
+//
+//     // Use the same scalar derivation as get_public_key() for consistency with Elixir
+//     let sk_scalar = if sk_bytes.len() == 64 {
+//         // For 64-byte keys: use bls12_381 directly (exactly like get_public_key)
+//         let bytes_64: [u8; 64] = sk_bytes.try_into().map_err(|_| Error::InvalidSecretKey)?;
+//         Scalar::from_bytes_wide(&bytes_64)
+//     } else if sk_bytes.len() == 32 {
+//         // For 32-byte keys: convert to scalar
+//         let bytes_32: [u8; 32] = sk_bytes.try_into().map_err(|_| Error::InvalidSecretKey)?;
+//         Scalar::from_bytes(&bytes_32).into_option().ok_or(Error::InvalidSecretKey)?
+//     } else {
+//         return Err(Error::InvalidSecretKey);
+//     };
+//
+//     // Hash message to G2 point using bls12_381 hash-to-curve with ExpandMsgXmd
+//     let hash_point = <G2Projective as HashToCurve<ExpandMsgXmd<Sha256>>>::hash_to_curve(&[message], dst);
+//
+//     // Sign: signature = hash_point * secret_scalar
+//     let signature_point = hash_point * sk_scalar;
+//
+//     // Return compressed signature bytes
+//     Ok(signature_point.to_affine().to_compressed())
+// }
 
 /// Verify a signature using a compressed G1 public key (48 bytes) and signature (96 bytes)
-/// Errors out if the signature is invalid
+/// Uses pure bls12_381 implementation for complete consistency with signing
 pub fn verify(pk_bytes: &[u8], sig_bytes: &[u8], msg: &[u8], dst: &[u8]) -> Result<(), Error> {
-    let pk = BlsPublicKey::deserialize(pk_bytes).map_err(|_| Error::InvalidPoint)?;
-    let sig = BlsSignature::deserialize(sig_bytes).map_err(|_| Error::InvalidSignature)?;
+    use bls12_381::hash_to_curve::{ExpandMsgXmd, HashToCurve};
+    use bls12_381::pairing;
+    use sha2::Sha256;
 
-    let err = sig.verify(
-        true, // hash_to_curve
-        msg,
-        dst, // domain separation tag
-        &[], // no augmentation
-        &pk,
-        true, // validate pk ∈ G1
-    );
+    // Parse public key (G1 point)
+    let pk_g1 = parse_public_key(pk_bytes)?;
 
-    if err == BLST_ERROR::BLST_SUCCESS { Ok(()) } else { Err(Error::VerificationFailed) }
+    // Parse signature (G2 point)
+    let sig_g2 = parse_signature(sig_bytes)?;
+
+    // Hash message to G2 point using the same hash-to-curve as signing
+    let hash_point = <G2Projective as HashToCurve<ExpandMsgXmd<Sha256>>>::hash_to_curve(&[msg], dst);
+
+    // Verify using pairing: e(pk, hash) == e(G1, sig)
+    // This checks if sig == hash * sk, where pk == G1 * sk
+    let lhs = pairing(&pk_g1.to_affine(), &hash_point.to_affine());
+    let rhs = pairing(&G1Projective::generator().to_affine(), &sig_g2.to_affine());
+
+    if lhs == rhs {
+        Ok(())
+    } else {
+        Err(Error::VerificationFailed)
+    }
 }
 
 /// Aggregate multiple compressed G1 public keys into one compressed G1 public key (48 bytes)
@@ -357,14 +350,7 @@ mod tests {
         let pk_a = get_public_key(&sk_a).unwrap();
         let pk_b = get_public_key(&sk_b).unwrap();
 
-        // Check which path each key takes
-        let sk_a_scalar = Scalar::from_bytes_wide(&sk_a);
-        let sk_b_scalar = Scalar::from_bytes_wide(&sk_b);
-        let sk_a_blst_valid = BlsSecretKey::from_bytes(&sk_a_scalar.to_bytes()).is_ok();
-        let sk_b_blst_valid = BlsSecretKey::from_bytes(&sk_b_scalar.to_bytes()).is_ok();
-
-        println!("sk_a BLST valid: {}", sk_a_blst_valid);
-        println!("sk_b BLST valid: {}", sk_b_blst_valid);
+        // Test with pure bls12_381 64-byte key handling
 
         let ab = get_shared_secret(&pk_b, &sk_a).unwrap();
         let ba = get_shared_secret(&pk_a, &sk_b).unwrap();

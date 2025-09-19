@@ -144,7 +144,7 @@ impl Anr {
             pk: *pk,
             pop: pop.to_vec(),
             port: 36969,
-            ts,
+            ts: 1758295475,
             version,
             anr_name,
             anr_desc,
@@ -159,9 +159,14 @@ impl Anr {
         };
 
         // create signature over erlang term format like elixir
+        println!("{sk:?}");
+        println!("{pk:?}");
         let to_sign = anr.to_etf_bin_for_signing();
+        println!("{to_sign:?}");
         let dst = crate::consensus::DST_ANR;
         let sig_array = sign(sk, &to_sign, dst)?;
+        println!("{sig_array:?}");
+        panic!();
         anr.signature = sig_array.to_vec();
 
         Ok(anr)
@@ -331,7 +336,7 @@ impl Anr {
         map.insert(Term::Atom(Atom::from("pop")), Term::Binary(Binary::from(self.pop.clone())));
         map.insert(Term::Atom(Atom::from("port")), Term::FixInteger(FixInteger::from(self.port as i32)));
         map.insert(Term::Atom(Atom::from("ts")), Term::FixInteger(FixInteger::from(self.ts as i32)));
-        map.insert(Term::Atom(Atom::from("version")), Term::Binary(Binary::from(self.version.to_string().as_bytes().to_vec())));
+        map.insert(Term::Atom(Atom::from("version")), Term::Binary(Binary::from(format!("{}", self.version).as_bytes().to_vec())));
 
         map.into_term()
     }
