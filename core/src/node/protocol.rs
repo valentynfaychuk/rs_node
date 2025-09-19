@@ -41,6 +41,9 @@ pub trait Protocol: Typename + Debug + Send + Sync {
 
         let shards = EncryptedMessageReassembler::build_shards(&ctx.config, &payload, &dst_anr.pk)?;
         for shard in &shards {
+            if self.typename() == NewPhoneWhoDisReply::TYPENAME && dst.to_string() == "94.130.221.61" {
+                println!("{shard:?}");
+            }
             ctx.socket.send_to_with_metrics(shard, dst_addr, &ctx.metrics).await?;
         }
 

@@ -31,6 +31,8 @@ pub enum Error {
     Anr(#[from] anr::Error),
     #[error(transparent)]
     Peers(#[from] peers::Error),
+    #[error(transparent)]
+    RocksDb(#[from] utils::rocksdb::Error),
     #[error("{0}")]
     String(String),
 }
@@ -44,6 +46,7 @@ impl Typename for Error {
 /// Runtime container for config, metrics, reassembler, and node state.
 pub struct Context {
     pub(crate) config: config::Config,
+    pub(crate) fabric: Arc<consensus::fabric::Fabric>,
     pub(crate) metrics: metrics::Metrics,
     //pub(crate) reassembler: node::ReedSolomonReassembler,
     pub(crate) encrypted_reassembler: node::EncryptedMessageReassembler,
@@ -70,7 +73,6 @@ impl Context {
         socket: Arc<dyn UdpSocketExt>,
     ) -> Result<Arc<Self>, Error> {
         use crate::config::{BROADCAST_PERIOD_SECS, CLEANUP_PERIOD_SECS, HANDSHAKE_PERIOD_SECS};
-        use crate::consensus::fabric::init_kvdb;
         use crate::utils::archiver::init_storage;
         use metrics::Metrics;
         // use node::reassembler::ReedSolomonReassembler as Reassembler;
@@ -78,7 +80,9 @@ impl Context {
         use tokio::time::{Duration, interval};
 
         assert_ne!(config.get_root(), "");
-        init_kvdb(&config.get_root()).await?;
+        // Initialize both the new Fabric and the legacy singleton for backward compatibility
+        let fabric = Arc::new(consensus::fabric::Fabric::init(&config.get_root()).await?);
+        crate::utils::rocksdb::init(format!("{}/fabric_legacy", config.get_root())).await?;
         init_storage(&config.get_root()).await?;
 
         let metrics = Metrics::new();
@@ -90,7 +94,7 @@ impl Context {
         node_anrs.seed(&config).await; // must be done before node_peers.seed()
         node_peers.seed(&config, &node_anrs).await?;
 
-        let ctx = Arc::new(Self { config, metrics, encrypted_reassembler, node_peers, node_anrs, socket });
+        let ctx = Arc::new(Self { config, fabric, metrics, encrypted_reassembler, node_peers, node_anrs, socket });
 
         tokio::spawn({
             let ctx = ctx.clone();
@@ -148,8 +152,14 @@ impl Context {
 
     #[instrument(skip(self), name = "bootstrap_task")]
     async fn bootstrap_task(&self) -> Result<(), Error> {
-        // v1.1.7+ simplified NewPhoneWhoDis - no fields needed
         let new_phone_who_dis = NewPhoneWhoDis::new();
+
+        {
+            // DEBUG
+            let new_phone_who_dis_reply = NewPhoneWhoDisReply::new(Anr::from_config(&self.config)?);
+            let ip = "94.130.221.61".parse::<Ipv4Addr>().unwrap();
+            new_phone_who_dis_reply.send_to_with_metrics(self, ip).await?;
+        }
 
         for ip in &self.config.seed_ips {
             // CRITICAL: v1.1.8+ nodes expect encrypted messages using seed ANR data
@@ -645,6 +655,28 @@ impl Context {
 
         Ok(())
     }
+
+    // Database convenience methods using embedded Fabric
+
+    /// Get a value from the specified column family
+    pub fn fabric_get(&self, cf: &str, key: &[u8]) -> Result<Option<Vec<u8>>, consensus::fabric::Error> {
+        self.fabric.get(cf, key)
+    }
+
+    /// Put a value into the specified column family
+    pub fn fabric_put(&self, cf: &str, key: &[u8], value: &[u8]) -> Result<(), consensus::fabric::Error> {
+        self.fabric.put(cf, key, value)
+    }
+
+    /// Delete a key from the specified column family
+    pub fn fabric_delete(&self, cf: &str, key: &[u8]) -> Result<(), consensus::fabric::Error> {
+        self.fabric.delete(cf, key)
+    }
+
+    /// Iterator over key-value pairs with a given prefix
+    pub fn fabric_iter_prefix(&self, cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, consensus::fabric::Error> {
+        self.fabric.iter_prefix(cf, prefix)
+    }
 }
 
 #[cfg(test)]
@@ -883,7 +915,16 @@ mod tests {
         // let reassembler = node::reassembler::ReedSolomonReassembler::new();
         let encrypted_reassembler = node::EncryptedMessageReassembler::new();
 
-        let ctx = Context { config, metrics, encrypted_reassembler, node_peers, node_anrs, socket };
+        // Create a temporary fabric for testing
+        let fabric = {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let tmp_dir = format!("/tmp/test_context_fabric_{}", std::process::id());
+            rt.block_on(async {
+                Arc::new(consensus::fabric::Fabric::init(&tmp_dir).await.expect("test fabric init"))
+            })
+        };
+
+        let ctx = Context { config, fabric, metrics, encrypted_reassembler, node_peers, node_anrs, socket };
 
         // Test task tracking via Context wrapper methods
         let snapshot = ctx.get_metrics_snapshot();

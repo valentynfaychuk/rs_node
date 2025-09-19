@@ -5,7 +5,9 @@ use crate::utils::misc::{TermExt, bitvec_to_bools, bools_to_bitvec};
 use crate::utils::rocksdb;
 use crate::utils::safe_etf::encode_safe_deterministic;
 use eetf::{Atom, BigInteger, Binary, Term};
+use rust_rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, DBCompressionType, DBRecoveryMode, Direction, FlushOptions, IteratorMode, MultiThreaded, OptimisticTransactionDB, Options, ReadOptions, SliceTransform};
 use std::collections::HashMap;
+use tokio::fs::create_dir_all;
 use tracing::{info, Instrument};
 // TODO: make the database trait that the fabric will use
 
@@ -13,6 +15,10 @@ use tracing::{info, Instrument};
 pub enum Error {
     #[error(transparent)]
     RocksDb(#[from] rocksdb::Error),
+    #[error(transparent)]
+    RocksDbDirect(#[from] rust_rocksdb::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     #[error(transparent)]
     EtfDecode(#[from] eetf::DecodeError),
     #[error(transparent)]
@@ -40,6 +46,153 @@ const CF_MY_SEEN_TIME_FOR_ENTRY: &str = "my_seen_time_entry|entryhash";
 const CF_MY_ATTESTATION_FOR_ENTRY: &str = "my_attestation_for_entry|entryhash";
 const CF_CONSENSUS_BY_ENTRYHASH: &str = "consensus_by_entryhash|Map<mutationshash,consensus>";
 const CF_SYSCONF: &str = "sysconf";
+
+/// Fabric database wrapper containing the OptimisticTransactionDB
+pub struct Fabric {
+    db: OptimisticTransactionDB<MultiThreaded>,
+}
+
+impl Fabric {
+    /// Initialize Fabric DB area (creates/opens RocksDB with the required CFs)
+    pub async fn init(base: &str) -> Result<Self, Error> {
+        let long_init_hint = tokio::spawn(async {
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            info!("rocksdb needs time to seal memtables to SST and compact L0 files...");
+        }.instrument(tracing::Span::current()));
+
+        // Create the fabric directory path
+        let path = format!("{}/fabric/db", base);
+        create_dir_all(&path).await?;
+
+        // Configure database options (copied from rocksdb::init)
+        let mut db_opts = Options::default();
+        db_opts.create_if_missing(true);
+        db_opts.create_missing_column_families(true);
+
+        #[cfg(debug_assertions)]
+        db_opts.set_use_fsync(false); // faster on macOS for dev
+
+        // Bigger memtables → fewer WAL flushes/SSTs
+        db_opts.set_write_buffer_size(64 * 1024 * 1024);
+        db_opts.set_db_write_buffer_size(1024 * 1024 * 1024);
+        db_opts.set_max_write_buffer_number(3);
+        db_opts.set_min_write_buffer_number_to_merge(1);
+
+        // Keep open FDs bounded
+        db_opts.set_max_open_files(1024);
+        db_opts.set_max_file_opening_threads(8);
+        db_opts.increase_parallelism(4);
+
+        // WAL hygiene: trigger flush/purge rather than piling up thousands of WALs
+        db_opts.set_max_total_wal_size(1 * 1024 * 1024 * 1024); // 1GB cap
+        db_opts.set_recycle_log_file_num(8);
+        db_opts.set_wal_bytes_per_sync(1 << 20);
+        db_opts.set_bytes_per_sync(1 << 20);
+
+        // Faster, tolerant recovery (optional)
+        db_opts.set_wal_recovery_mode(DBRecoveryMode::TolerateCorruptedTailRecords);
+
+        // RocksDB auto-allocates between flushes/compactions
+        db_opts.set_max_background_jobs(6);
+
+        let mut block_opts = BlockBasedOptions::default();
+        let cache = Cache::new_lru_cache(128 * 1024 * 1024);
+        block_opts.set_block_cache(&cache);
+        db_opts.set_block_based_table_factory(&block_opts);
+
+        // Create column family descriptors
+        let cf_descs: Vec<_> = Self::cf_names()
+            .iter()
+            .map(|&name| {
+                let mut opts = Options::default();
+                opts.set_target_file_size_base(64 * 1024 * 1024);
+                opts.set_target_file_size_multiplier(2);
+                opts.set_write_buffer_size(64 * 1024 * 1024);
+                opts.set_max_write_buffer_number(2);
+                opts.set_level_zero_file_num_compaction_trigger(4);
+                opts.set_compression_type(DBCompressionType::Lz4);
+                opts.set_level_compaction_dynamic_level_bytes(true);
+                opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(8));
+                let mut block_opts = BlockBasedOptions::default();
+                block_opts.set_bloom_filter(10.0, true);
+                block_opts.set_block_size(16 * 1024); // 16KB blocks
+                opts.set_block_based_table_factory(&block_opts);
+                ColumnFamilyDescriptor::new(name, opts)
+            })
+            .collect();
+
+        // Open the database in a blocking task since RocksDB init doesn't yield
+        let db = tokio::task::spawn_blocking(move || {
+            OptimisticTransactionDB::open_cf_descriptors(&db_opts, path, cf_descs)
+        }).await??;
+
+        // Flush operations
+        db.flush_opt(&FlushOptions::default())?; // for the default CF
+        db.flush_wal(true)?; // forces WAL roll+fsync
+
+        long_init_hint.abort();
+
+        Ok(Fabric { db })
+    }
+
+    /// Get column family names (copied from rocksdb module)
+    fn cf_names() -> &'static [&'static str] {
+        &[
+            "default",
+            "entry_by_height|height:entryhash",
+            "entry_by_slot|slot:entryhash",
+            "tx|txhash:entryhash",
+            "tx_account_nonce|account:nonce->txhash",
+            "tx_receiver_nonce|receiver:nonce->txhash",
+            "my_seen_time_entry|entryhash",
+            "my_attestation_for_entry|entryhash",
+            "consensus",
+            "consensus_by_entryhash|Map<mutationshash,consensus>",
+            "contractstate",
+            "muts",
+            "muts_rev",
+            "sysconf",
+        ]
+    }
+
+    /// Get a value from the specified column family
+    pub fn get(&self, cf: &str, key: &[u8]) -> Result<Option<Vec<u8>>, Error> {
+        let cf_h = self.db.cf_handle(cf).expect("cf name");
+        Ok(self.db.get_cf(&cf_h, key)?)
+    }
+
+    /// Put a value into the specified column family
+    pub fn put(&self, cf: &str, key: &[u8], value: &[u8]) -> Result<(), Error> {
+        let cf_h = self.db.cf_handle(cf).expect("cf name");
+        Ok(self.db.put_cf(&cf_h, key, value)?)
+    }
+
+    /// Delete a key from the specified column family
+    pub fn delete(&self, cf: &str, key: &[u8]) -> Result<(), Error> {
+        let cf_h = self.db.cf_handle(cf).expect("cf name");
+        Ok(self.db.delete_cf(&cf_h, key)?)
+    }
+
+    /// Iterator over key-value pairs with a given prefix
+    pub fn iter_prefix(&self, cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Error> {
+        let cf_h = self.db.cf_handle(cf).expect("cf name");
+        let mut ro = ReadOptions::default();
+        ro.set_prefix_same_as_start(true);
+        let mode = IteratorMode::From(prefix, Direction::Forward);
+        let iter = self.db.iterator_cf_opt(&cf_h, ro, mode);
+        let mut results = Vec::new();
+
+        for item in iter {
+            let (key, value) = item?;
+            if !key.starts_with(prefix) {
+                break;
+            }
+            results.push((key.to_vec(), value.to_vec()));
+        }
+
+        Ok(results)
+    }
+}
 
 /// Initialize Fabric DB area (creates/open RocksDB with the required CFs)
 pub async fn init_kvdb(base: &str) -> Result<(), Error> {

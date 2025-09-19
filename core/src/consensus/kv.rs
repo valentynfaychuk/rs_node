@@ -1,4 +1,5 @@
 use crate::utils::rocksdb;
+use crate::Context;
 use blake3;
 use std::collections::VecDeque;
 
@@ -82,6 +83,28 @@ pub fn reset_for_tests() {
     }
 }
 
+// Context-aware version for tests using Fabric
+#[cfg(test)]
+pub fn reset_for_tests_with_context(ctx: &Context) {
+    reset(); // Clear mutations
+
+    // Clear all data from the sysconf column family to ensure clean test state
+    loop {
+        let items = match ctx.fabric.iter_prefix("sysconf", b"") {
+            Ok(items) => items,
+            Err(_) => break,
+        };
+
+        if items.is_empty() {
+            break;
+        }
+
+        for (k, _v) in items {
+            let _ = ctx.fabric.delete("sysconf", &k);
+        }
+    }
+}
+
 pub fn kv_put(key: &str, value: &[u8]) {
     get_store_mut(|ctx| {
         // Get existing value from RocksDB for reverse mutation
@@ -98,6 +121,27 @@ pub fn kv_put(key: &str, value: &[u8]) {
                 ctx.mutations_reverse.push_back(Mutation { op: Op::Put, key: key.to_string(), value: Some(old) })
             }
             None => ctx.mutations_reverse.push_back(Mutation { op: Op::Delete, key: key.to_string(), value: None }),
+        }
+    });
+}
+
+// Context-aware version using Fabric
+pub fn kv_put_with_context(ctx: &Context, key: &str, value: &[u8]) {
+    get_store_mut(|kv_ctx| {
+        // Get existing value from Fabric for reverse mutation
+        let existed = ctx.fabric.get("sysconf", key.as_bytes()).unwrap_or(None);
+
+        // Store in Fabric
+        let _ = ctx.fabric.put("sysconf", key.as_bytes(), value);
+
+        // forward mutation tracks new value
+        kv_ctx.mutations.push_back(Mutation { op: Op::Put, key: key.to_string(), value: Some(value.to_vec()) });
+        // reverse mutation: if existed put old value, else delete
+        match existed {
+            Some(old) => {
+                kv_ctx.mutations_reverse.push_back(Mutation { op: Op::Put, key: key.to_string(), value: Some(old) })
+            }
+            None => kv_ctx.mutations_reverse.push_back(Mutation { op: Op::Delete, key: key.to_string(), value: None }),
         }
     });
 }
@@ -124,6 +168,29 @@ pub fn kv_increment(key: &str, delta: i64) -> i64 {
     })
 }
 
+// Context-aware version using Fabric
+pub fn kv_increment_with_context(ctx: &Context, key: &str, delta: i64) -> i64 {
+    get_store_mut(|kv_ctx| {
+        // Get current value from Fabric
+        let cur = ctx.fabric.get("sysconf", key.as_bytes()).unwrap_or(None).and_then(|v| ascii_i64(&v)).unwrap_or(0);
+        let newv = cur.saturating_add(delta);
+        let new_bytes = i64_ascii(newv);
+        let old_bytes = ctx.fabric.get("sysconf", key.as_bytes()).unwrap_or(None);
+
+        // Store updated value in Fabric
+        let _ = ctx.fabric.put("sysconf", key.as_bytes(), &new_bytes);
+
+        kv_ctx.mutations.push_back(Mutation { op: Op::Put, key: key.to_string(), value: Some(new_bytes) });
+        match old_bytes {
+            Some(old) => {
+                kv_ctx.mutations_reverse.push_back(Mutation { op: Op::Put, key: key.to_string(), value: Some(old) })
+            }
+            None => kv_ctx.mutations_reverse.push_back(Mutation { op: Op::Delete, key: key.to_string(), value: None }),
+        }
+        newv
+    })
+}
+
 pub fn kv_delete(key: &str) {
     get_store_mut(|ctx| {
         // Get existing value from RocksDB before deleting
@@ -137,20 +204,63 @@ pub fn kv_delete(key: &str) {
     });
 }
 
+// Context-aware version using Fabric
+pub fn kv_delete_with_context(ctx: &Context, key: &str) {
+    get_store_mut(|kv_ctx| {
+        // Get existing value from Fabric before deleting
+        if let Some(old) = ctx.fabric.get("sysconf", key.as_bytes()).unwrap_or(None) {
+            // Delete from Fabric
+            let _ = ctx.fabric.delete("sysconf", key.as_bytes());
+
+            kv_ctx.mutations.push_back(Mutation { op: Op::Delete, key: key.to_string(), value: None });
+            kv_ctx.mutations_reverse.push_back(Mutation { op: Op::Put, key: key.to_string(), value: Some(old) });
+        }
+    });
+}
+
 pub fn kv_get(key: &str) -> Option<Vec<u8>> {
     rocksdb::get("sysconf", key.as_bytes()).unwrap_or(None)
+}
+
+// Context-aware version using Fabric
+pub fn kv_get_with_context(ctx: &Context, key: &str) -> Option<Vec<u8>> {
+    ctx.fabric.get("sysconf", key.as_bytes()).unwrap_or(None)
 }
 
 pub fn kv_get_to_i64(key: &str) -> Option<i64> {
     kv_get(key).and_then(|v| ascii_i64(&v))
 }
 
+// Context-aware version using Fabric
+pub fn kv_get_to_i64_with_context(ctx: &Context, key: &str) -> Option<i64> {
+    kv_get_with_context(ctx, key).and_then(|v| ascii_i64(&v))
+}
+
 pub fn kv_exists(key: &str) -> bool {
     rocksdb::get("sysconf", key.as_bytes()).unwrap_or(None).is_some()
 }
 
+// Context-aware version using Fabric
+pub fn kv_exists_with_context(ctx: &Context, key: &str) -> bool {
+    ctx.fabric.get("sysconf", key.as_bytes()).unwrap_or(None).is_some()
+}
+
 pub fn kv_get_prefix(prefix: &str) -> Vec<(String, Vec<u8>)> {
     match rocksdb::iter_prefix("sysconf", prefix.as_bytes()) {
+        Ok(items) => items
+            .into_iter()
+            .filter_map(|(k, v)| {
+                let key_str = String::from_utf8(k).ok()?;
+                if key_str.starts_with(prefix) { Some((key_str[prefix.len()..].to_string(), v)) } else { None }
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+// Context-aware version using Fabric
+pub fn kv_get_prefix_with_context(ctx: &Context, prefix: &str) -> Vec<(String, Vec<u8>)> {
+    match ctx.fabric.iter_prefix("sysconf", prefix.as_bytes()) {
         Ok(items) => items
             .into_iter()
             .filter_map(|(k, v)| {
@@ -182,6 +292,34 @@ pub fn kv_clear(prefix: &str) -> usize {
 
                 ctx.mutations.push_back(Mutation { op: Op::Delete, key: key_str.clone(), value: None });
                 ctx.mutations_reverse.push_back(Mutation { op: Op::Put, key: key_str, value: Some(v) });
+                count += 1;
+            }
+        }
+        count
+    })
+}
+
+// Context-aware version using Fabric
+pub fn kv_clear_with_context(ctx: &Context, prefix: &str) -> usize {
+    get_store_mut(|kv_ctx| {
+        // Get all keys with this prefix from Fabric
+        let items = match ctx.fabric.iter_prefix("sysconf", prefix.as_bytes()) {
+            Ok(items) => items,
+            Err(_) => return 0,
+        };
+
+        let mut count = 0usize;
+        for (k, v) in items {
+            let key_str = match String::from_utf8(k.clone()) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if key_str.starts_with(prefix) {
+                // Delete from Fabric
+                let _ = ctx.fabric.delete("sysconf", &k);
+
+                kv_ctx.mutations.push_back(Mutation { op: Op::Delete, key: key_str.clone(), value: None });
+                kv_ctx.mutations_reverse.push_back(Mutation { op: Op::Put, key: key_str, value: Some(v) });
                 count += 1;
             }
         }
@@ -222,6 +360,42 @@ pub fn kv_set_bit(key: &str, bit_idx: u32, bloom_size_opt: Option<u32>) -> bool 
         // Set the bit and store in RocksDB
         page[byte_i] |= mask;
         let _ = rocksdb::put("sysconf", key.as_bytes(), &page);
+        true
+    })
+}
+
+// Context-aware version using Fabric
+pub fn kv_set_bit_with_context(ctx: &Context, key: &str, bit_idx: u32, bloom_size_opt: Option<u32>) -> bool {
+    let bloom_size = bloom_size_opt.unwrap_or(65_536);
+    let byte_len = (bloom_size as usize).div_ceil(8);
+    get_store_mut(|kv_ctx| {
+        // Get existing page from Fabric or create new one
+        let mut page = ctx.fabric.get("sysconf", key.as_bytes()).unwrap_or(None).unwrap_or_else(|| vec![0u8; byte_len]);
+
+        let byte_i = (bit_idx / 8) as usize;
+        let bit_in_byte = (bit_idx % 8) as u8; // LSB first to match Elixir bitstring semantics
+        let mask = 1u8 << bit_in_byte;
+        let old_set = (page[byte_i] & mask) != 0;
+        if old_set {
+            return false;
+        }
+
+        // Record mutations (forward: set_bit; reverse: clear_bit or delete if not existed)
+        let existed = ctx.fabric.get("sysconf", key.as_bytes()).unwrap_or(None).is_some();
+        kv_ctx.mutations.push_back(Mutation { op: Op::SetBit { bit_idx, bloom_size }, key: key.to_string(), value: None });
+        if existed {
+            kv_ctx.mutations_reverse.push_back(Mutation {
+                op: Op::ClearBit { bit_idx },
+                key: key.to_string(),
+                value: None,
+            });
+        } else {
+            kv_ctx.mutations_reverse.push_back(Mutation { op: Op::Delete, key: key.to_string(), value: None });
+        }
+
+        // Set the bit and store in Fabric
+        page[byte_i] |= mask;
+        let _ = ctx.fabric.put("sysconf", key.as_bytes(), &page);
         true
     })
 }
@@ -294,6 +468,42 @@ pub fn revert(m_rev: &[Mutation]) {
                         let mask = 1u8 << bit_in_byte;
                         page[byte_i] |= mask;
                         let _ = rocksdb::put("sysconf", m.key.as_bytes(), &page);
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Context-aware version using Fabric
+pub fn revert_with_context(ctx: &Context, m_rev: &[Mutation]) {
+    get_store_mut(|_kv_ctx| {
+        for m in m_rev.iter().rev() {
+            match &m.op {
+                Op::Put => {
+                    if let Some(v) = &m.value {
+                        let _ = ctx.fabric.put("sysconf", m.key.as_bytes(), v);
+                    }
+                }
+                Op::Delete => {
+                    let _ = ctx.fabric.delete("sysconf", m.key.as_bytes());
+                }
+                Op::ClearBit { bit_idx } => {
+                    if let Some(mut page) = ctx.fabric.get("sysconf", m.key.as_bytes()).unwrap_or(None) {
+                        let byte_i = (*bit_idx / 8) as usize;
+                        let bit_in_byte = (*bit_idx % 8) as u8;
+                        let mask = 1u8 << bit_in_byte;
+                        page[byte_i] &= !mask;
+                        let _ = ctx.fabric.put("sysconf", m.key.as_bytes(), &page);
+                    }
+                }
+                Op::SetBit { bit_idx, .. } => {
+                    if let Some(mut page) = ctx.fabric.get("sysconf", m.key.as_bytes()).unwrap_or(None) {
+                        let byte_i = (*bit_idx / 8) as usize;
+                        let bit_in_byte = (*bit_idx % 8) as u8;
+                        let mask = 1u8 << bit_in_byte;
+                        page[byte_i] |= mask;
+                        let _ = ctx.fabric.put("sysconf", m.key.as_bytes(), &page);
                     }
                 }
             }
