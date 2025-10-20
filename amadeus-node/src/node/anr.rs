@@ -1,4 +1,5 @@
 use crate::config::{Config, SeedANR};
+use crate::node::protocol::Typename;
 use crate::utils::blake3;
 use crate::utils::bls12_381::{sign, verify};
 use crate::utils::misc::{TermExt, TermMap, get_unix_secs_now};
@@ -39,7 +40,7 @@ pub enum Error {
     BadEtf(&'static str),
 }
 
-impl crate::utils::misc::Typename for Error {
+impl Typename for Error {
     fn typename(&self) -> &'static str {
         self.into()
     }

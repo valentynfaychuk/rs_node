@@ -5,7 +5,7 @@ use crate::consensus::agg_sig::{DST_ENTRY, DST_VRF};
 use crate::consensus::doms::tx::TxU;
 use crate::consensus::fabric;
 use crate::node::protocol;
-use crate::node::protocol::Protocol;
+use crate::node::protocol::{Protocol, Typename};
 use crate::utils::bls12_381;
 use crate::utils::misc::{TermExt, TermMap, bin_to_bitvec, bitvec_to_bin, get_unix_millis_now};
 use crate::utils::safe_etf::{encode_safe, encode_safe_deterministic, i64_to_term, u64_to_term};
@@ -238,7 +238,7 @@ impl TryInto<Vec<u8>> for Entry {
     }
 }
 
-impl crate::utils::misc::Typename for Entry {
+impl Typename for Entry {
     fn typename(&self) -> &'static str {
         Self::TYPENAME
     }

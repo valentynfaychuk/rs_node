@@ -12,7 +12,7 @@ use crate::node::anr::Anr;
 use crate::node::peers::HandshakeStatus;
 use crate::node::{anr, peers};
 use crate::utils::bls12_381;
-use crate::utils::misc::{TermExt, TermMap, Typename, get_unix_millis_now, parse_list, serialize_list};
+use crate::utils::misc::{TermExt, TermMap, get_unix_millis_now, parse_list, serialize_list};
 use crate::utils::safe_etf::{encode_safe, u64_to_term};
 use eetf::convert::TryAsRef;
 use eetf::{Atom, Binary, DecodeError as EtfDecodeError, EncodeError as EtfEncodeError, List, Map, Term};
@@ -22,6 +22,13 @@ use std::io::Error as IoError;
 use std::net::{Ipv4Addr, SocketAddr};
 use tracing::instrument;
 use tracing::warn;
+
+/// Trait for types that can provide their type name as a static string
+pub trait Typename {
+    /// Get the type name for this instance
+    /// For enums, this can return different names based on the variant
+    fn typename(&self) -> &'static str;
+}
 
 /// Every object that has this trait must be convertible from an Erlang ETF
 /// Binary representation and must be able to handle itself as a message
@@ -138,7 +145,7 @@ pub fn parse_etf_bin(bin: &[u8]) -> Result<Box<dyn Protocol>, Error> {
         Entry::TYPENAME => Box::new(Entry::from_etf_map_validated(map)?),
         EventTip::TYPENAME => Box::new(EventTip::from_etf_map_validated(map)?),
         EventAttestation::TYPENAME => Box::new(EventAttestation::from_etf_map_validated(map)?),
-        crate::bic::sol::Solution::TYPENAME => Box::new(crate::bic::sol_protocol::SolutionProto::from_etf_map_validated(map)?),
+        Solution::TYPENAME => Box::new(Solution::from_etf_map_validated(map)?),
         EventTx::TYPENAME => Box::new(EventTx::from_etf_map_validated(map)?),
         GetPeerAnrs::TYPENAME => Box::new(GetPeerAnrs::from_etf_map_validated(map)?),
         GetPeerAnrsReply::TYPENAME => Box::new(GetPeerAnrsReply::from_etf_map_validated(map)?),
@@ -929,6 +936,74 @@ impl Protocol for SpecialBusinessReply {
 
 impl SpecialBusinessReply {
     pub const TYPENAME: &'static str = "special_business_reply";
+}
+
+// Protocol implementation for Solution (from amadeus-runtime)
+impl Typename for Solution {
+    fn typename(&self) -> &'static str {
+        Solution::TYPENAME
+    }
+}
+
+#[async_trait::async_trait]
+impl Protocol for Solution {
+    fn from_etf_map_validated(map: TermMap) -> Result<Self, Error> {
+        let bin = map.get_binary("sol").ok_or(sol::Error::Missing("sol"))?;
+        Solution::from_etf_validated(bin).map_err(Into::into)
+    }
+
+    fn to_etf_bin(&self) -> Result<Vec<u8>, Error> {
+        // convert solution back to binary format
+        let sol_bin = match self {
+            Solution::V2(v2) => {
+                let mut buf = Vec::with_capacity(sol::SOL_SIZE);
+                buf.extend_from_slice(&v2.epoch.to_le_bytes());
+                buf.extend_from_slice(&v2.segment_vr_hash);
+                buf.extend_from_slice(&v2.pk);
+                buf.extend_from_slice(&v2.pop);
+                buf.extend_from_slice(&v2.computor);
+                buf.extend_from_slice(&v2.nonce);
+                buf.extend_from_slice(&v2.tensor_c);
+                buf
+            }
+            Solution::V1(v1) => {
+                let mut buf = Vec::with_capacity(320);
+                buf.extend_from_slice(&v1.epoch.to_le_bytes());
+                buf.extend_from_slice(&v1.pk);
+                buf.extend_from_slice(&v1.pop);
+                buf.extend_from_slice(&v1.computor);
+                buf.extend_from_slice(&v1.segment_vr);
+                buf.resize(320, 0);
+                buf
+            }
+            Solution::V0(v0) => {
+                let mut buf = Vec::with_capacity(256);
+                buf.extend_from_slice(&v0.epoch.to_le_bytes());
+                buf.extend_from_slice(&v0.pk);
+                buf.extend_from_slice(&v0.pop);
+                buf.extend_from_slice(&v0.computor);
+                buf.resize(256, 0);
+                buf
+            }
+        };
+
+        let mut m = HashMap::new();
+        m.insert(Term::Atom(Atom::from("op")), Term::Atom(Atom::from(Solution::TYPENAME)));
+        m.insert(Term::Atom(Atom::from("sol")), Term::from(eetf::Binary { bytes: sol_bin }));
+
+        let term = Term::from(eetf::Map { map: m });
+        let out = encode_safe(&term);
+        Ok(out)
+    }
+
+    async fn handle(
+        &self,
+        _ctx: &Context,
+        _src: std::net::Ipv4Addr,
+    ) -> Result<Vec<Instruction>, Error> {
+        // cache the solution
+        Ok(vec![Instruction::Noop { why: "solution handling not implemented".to_string() }])
+    }
 }
 
 #[cfg(test)]

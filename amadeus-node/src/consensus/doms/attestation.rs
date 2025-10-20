@@ -1,7 +1,7 @@
 use crate::Context;
 use crate::consensus::agg_sig::DST_ATT;
 use crate::node::protocol;
-use crate::node::protocol::Protocol;
+use crate::node::protocol::{Protocol, Typename};
 use crate::utils::bls12_381 as bls;
 use crate::utils::bls12_381::Error as BlsError;
 use crate::utils::misc::{TermExt, TermMap};
@@ -57,7 +57,7 @@ impl Debug for Attestation {
     }
 }
 
-impl crate::utils::misc::Typename for EventAttestation {
+impl Typename for EventAttestation {
     fn typename(&self) -> &'static str {
         Self::TYPENAME
     }

@@ -1,8 +1,8 @@
 use crate::config::Config;
 use crate::consensus::doms::EntrySummary;
 use crate::node::anr;
-use crate::node::protocol::{EventTip, PingReply};
-use crate::utils::misc::{Typename, get_unix_millis_now};
+use crate::node::protocol::{EventTip, PingReply, Typename};
+use crate::utils::misc::get_unix_millis_now;
 use crate::{Context, Ver};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -82,7 +82,7 @@ pub enum Error {
     StorageError(String),
 }
 
-impl crate::utils::misc::Typename for Error {
+impl Typename for Error {
     fn typename(&self) -> &'static str {
         self.into()
     }

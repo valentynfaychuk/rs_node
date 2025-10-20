@@ -1,10 +1,9 @@
 use crate::node::anr::{Anr, NodeAnrs};
 use crate::node::peers::{HandshakeStatus, PeersSummary};
 use crate::node::protocol::*;
-use crate::node::protocol::{Catchup, CatchupHeight, Instruction, NewPhoneWhoDis, NewPhoneWhoDisReply};
+use crate::node::protocol::{Catchup, CatchupHeight, Instruction, NewPhoneWhoDis, NewPhoneWhoDisReply, Typename};
 use crate::node::{anr, peers};
 use crate::socket::UdpSocketExt;
-use crate::utils::misc::Typename;
 use crate::utils::misc::{format_duration, get_unix_millis_now};
 use crate::{SystemStats, Ver, config, consensus, get_system_stats, metrics, node, utils};
 use bitvec::prelude::*;

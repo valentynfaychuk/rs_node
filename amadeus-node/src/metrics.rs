@@ -1,4 +1,5 @@
-use crate::utils::misc::{Typename, get_unix_secs_now};
+use crate::node::protocol::Typename;
+use crate::utils::misc::get_unix_secs_now;
 use scc::HashIndex as SccHashIndex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -332,7 +333,7 @@ mod tests {
 
     #[derive(Debug)]
     struct DummyErr;
-    impl crate::utils::misc::Typename for DummyErr {
+    impl Typename for DummyErr {
         fn typename(&self) -> &'static str {
             "dummy"
         }

@@ -1,3 +1,4 @@
+use crate::node::protocol::Typename;
 use crate::utils::{bls12_381, misc::get_unix_millis_now, misc::get_unix_nanos_now};
 use crate::{Config, Ver};
 use aes_gcm::aead::{Aead, AeadCore, OsRng};
@@ -24,7 +25,7 @@ pub enum Error {
     PayloadTooSmall,
 }
 
-impl crate::utils::misc::Typename for Error {
+impl Typename for Error {
     fn typename(&self) -> &'static str {
         self.into()
     }

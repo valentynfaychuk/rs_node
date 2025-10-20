@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-
-pub mod bic;
 pub mod config;
 pub mod consensus;
 pub mod context;
@@ -13,7 +10,8 @@ pub use amadeus_utils as utils;
 pub use amadeus_utils::{Database, DatabaseError};
 
 // Re-export runtime modules
-pub use amadeus_runtime::{bic as runtime_bic, wasm, ApplyCtx, Mutation, Op};
+pub use amadeus_runtime::bic;
+pub use amadeus_runtime::{ApplyCtx, Mutation, Op, wasm};
 
 pub use config::Config;
 pub use context::{Context, SoftforkStatus};
