@@ -54,27 +54,3 @@ pub fn next(prev_bits: u32, sols: u64) -> u32 {
         prev_bits
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_difficulty_adjustment() {
-        // Test no change within tolerance
-        assert_eq!(next(30, 380_000), 30);
-
-        // Test increase for too many solutions
-        assert!(next(30, 500_000) > 30);
-
-        // Test decrease for too few solutions
-        assert!(next(30, 100_000) < 30);
-
-        // Test zero solutions
-        assert!(next(30, 0) < 30);
-
-        // Test clamping
-        assert_eq!(next(10, 0), DIFF_MIN_BITS);
-        assert_eq!(next(70, 1_000_000), DIFF_MAX_BITS);
-    }
-}

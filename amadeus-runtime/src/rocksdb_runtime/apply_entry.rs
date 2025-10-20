@@ -1,4 +1,4 @@
-use crate::kv::{ApplyCtx, Mutation};
+use crate::rocksdb_runtime::kv::{ApplyCtx, Mutation};
 use amadeus_utils::rocksdb::RocksDb;
 use amadeus_utils::bls12_381;
 use amadeus_utils::constants::DST_ATT;
@@ -125,7 +125,7 @@ pub fn apply_entry(
             muts_rev.extend(m3_gas_rev);
         } else {
             // failure: revert regular mutations, keep only gas mutations
-            crate::kv::revert(db, &m_rev3);
+            crate::rocksdb_runtime::kv::revert(db, &m_rev3);
             muts.extend(m3_gas);
             muts_rev.extend(m3_gas_rev);
         }
@@ -177,9 +177,9 @@ fn call_txs_pre(ctx: &mut ApplyCtx, db: &RocksDb, entry: &EntryHeader, txus: &[T
         // Calculate and deduct exec cost
         let bytes = txu.tx_encoded.len() + 32 + 96;
         let exec_cost = if epoch >= 295 {
-            crate::bic::coin::to_cents(1 + bytes as u128 / 1024) as i128
+            crate::rocksdb_runtime::bic::coin::to_cents(1 + bytes as u128 / 1024) as i128
         } else {
-            crate::bic::coin::to_cents(3 + bytes as u128 / 256 * 3) as i128
+            crate::rocksdb_runtime::bic::coin::to_cents(3 + bytes as u128 / 256 * 3) as i128
         };
 
         let signer_balance_key = bcat(&[b"bic:coin:balance:", &txu.tx.signer, b":AMA"]);
@@ -216,7 +216,7 @@ fn execute_transaction(
 
     ctx.reset();
 
-    let call_env = crate::bic::epoch::CallEnv {
+    let call_env = crate::rocksdb_runtime::bic::epoch::CallEnv {
         entry_epoch: entry.epoch,
         entry_height: entry.height,
         entry_signer: entry.signer,
@@ -251,12 +251,12 @@ fn execute_transaction(
 fn execute_epoch_call(
     ctx: &mut ApplyCtx,
     db: &RocksDb,
-    env: &crate::bic::epoch::CallEnv,
+    env: &crate::rocksdb_runtime::bic::epoch::CallEnv,
     function: &str,
     args: &[Vec<u8>],
 ) -> (String, Vec<String>) {
     parse_epoch_call(function, args)
-        .and_then(|call| crate::bic::epoch::Epoch.call(ctx, call, env, db).map_err(|e| e.to_string()))
+        .and_then(|call| crate::rocksdb_runtime::bic::epoch::Epoch.call(ctx, call, env, db).map_err(|e| e.to_string()))
         .map(|_| ("ok".to_string(), vec![]))
         .unwrap_or_else(|e| (e, vec![]))
 }
@@ -268,8 +268,8 @@ fn execute_coin_call(
     function: &str,
     args: &[Vec<u8>],
 ) -> (String, Vec<String>) {
-    let env = crate::bic::coin::CallEnv { account_caller: caller };
-    crate::bic::coin::call(ctx, db, function, &env, args)
+    let env = crate::rocksdb_runtime::bic::coin::CallEnv { account_caller: caller };
+    crate::rocksdb_runtime::bic::coin::call(ctx, db, function, &env, args)
         .map(|_| ("ok".to_string(), vec![]))
         .unwrap_or_else(|e| (e.to_string(), vec![]))
 }
@@ -281,8 +281,8 @@ fn execute_contract_call(
     function: &str,
     args: &[Vec<u8>],
 ) -> (String, Vec<String>) {
-    let env = crate::bic::contract::CallEnv { account_caller: caller };
-    crate::bic::contract::call(ctx, db, function, &env, args)
+    let env = crate::rocksdb_runtime::bic::contract::CallEnv { account_caller: caller };
+    crate::rocksdb_runtime::bic::contract::call(ctx, db, function, &env, args)
         .map(|_| ("ok".to_string(), vec![]))
         .unwrap_or_else(|e| (e.to_string(), vec![]))
 }
@@ -290,7 +290,7 @@ fn execute_contract_call(
 fn execute_wasm_call(
     ctx: &mut ApplyCtx,
     db: &RocksDb,
-    env: &crate::bic::epoch::CallEnv,
+    env: &crate::rocksdb_runtime::bic::epoch::CallEnv,
     contract: &[u8],
     function: &str,
     args: &[Vec<u8>],
@@ -310,7 +310,7 @@ fn execute_wasm_call(
     }
 
     // Execute WASM
-    match crate::bic::contract::bytecode(ctx, db, &contract_pk) {
+    match crate::rocksdb_runtime::bic::contract::bytecode(ctx, db, &contract_pk) {
         Some(wasm_bytes) => {
             match crate::wasm::runtime::execute(env, db, ctx.clone(), &wasm_bytes, function, args) {
                 Ok(result) => {
@@ -350,8 +350,8 @@ fn execute_wasm_call(
     }
 }
 
-fn parse_epoch_call(function: &str, args: &[Vec<u8>]) -> Result<crate::bic::epoch::EpochCall, String> {
-    use crate::bic::epoch::EpochCall;
+fn parse_epoch_call(function: &str, args: &[Vec<u8>]) -> Result<crate::rocksdb_runtime::bic::epoch::EpochCall, String> {
+    use crate::rocksdb_runtime::bic::epoch::EpochCall;
 
     match function {
         "submit_sol" => Ok(EpochCall::SubmitSol { sol: args.first().ok_or("missing sol arg")?.clone() }),
@@ -381,7 +381,7 @@ fn call_exit(ctx: &mut ApplyCtx, db: &RocksDb, entry: &EntryHeader) {
 
     // Epoch transition every 100k blocks
     if entry.height % 100_000 == 99_999 {
-        let env = crate::bic::epoch::CallEnv {
+        let env = crate::rocksdb_runtime::bic::epoch::CallEnv {
             entry_epoch: entry.epoch,
             entry_height: entry.height,
             entry_signer: entry.signer,
@@ -399,7 +399,7 @@ fn call_exit(ctx: &mut ApplyCtx, db: &RocksDb, entry: &EntryHeader) {
             seedf64: 0.0,
             readonly: true,
         };
-        let _ = crate::bic::epoch::Epoch.next(ctx, db, &env);
+        let _ = crate::rocksdb_runtime::bic::epoch::Epoch.next(ctx, db, &env);
     }
 }
 
@@ -422,23 +422,23 @@ fn hash_mutations_with_results(results: &[TxResult], muts: &[Mutation]) -> [u8; 
         let mut map = HashMap::new();
 
         let op_atom = match &m.op {
-            crate::kv::Op::Put => Atom::from("put"),
-            crate::kv::Op::Delete => Atom::from("delete"),
-            crate::kv::Op::SetBit { .. } => Atom::from("set_bit"),
-            crate::kv::Op::ClearBit { .. } => Atom::from("clear_bit"),
+            crate::rocksdb_runtime::kv::Op::Put => Atom::from("put"),
+            crate::rocksdb_runtime::kv::Op::Delete => Atom::from("delete"),
+            crate::rocksdb_runtime::kv::Op::SetBit { .. } => Atom::from("set_bit"),
+            crate::rocksdb_runtime::kv::Op::ClearBit { .. } => Atom::from("clear_bit"),
         };
         map.insert(Term::Atom(Atom::from("op")), Term::Atom(op_atom));
         map.insert(Term::Atom(Atom::from("key")), Term::Binary(Binary { bytes: m.key.clone() }));
 
         match (&m.op, &m.value) {
-            (crate::kv::Op::Put, Some(v)) => {
+            (crate::rocksdb_runtime::kv::Op::Put, Some(v)) => {
                 map.insert(Term::Atom(Atom::from("value")), Term::Binary(Binary { bytes: v.clone() }));
             }
-            (crate::kv::Op::SetBit { bit_idx, bloom_size }, _) => {
+            (crate::rocksdb_runtime::kv::Op::SetBit { bit_idx, bloom_size }, _) => {
                 map.insert(Term::Atom(Atom::from("value")), u32_to_term(*bit_idx));
                 map.insert(Term::Atom(Atom::from("bloomsize")), u32_to_term(*bloom_size));
             }
-            (crate::kv::Op::ClearBit { bit_idx }, _) => {
+            (crate::rocksdb_runtime::kv::Op::ClearBit { bit_idx }, _) => {
                 map.insert(Term::Atom(Atom::from("value")), u32_to_term(*bit_idx));
             }
             _ => {}

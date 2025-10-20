@@ -1,7 +1,7 @@
 use crate::bic::epoch::CallEnv;
 use crate::kv;
 use amadeus_utils::rocksdb;
-use crate::wasm::runtime;
+use super::runtime;
 use std::sync::Once;
 
 #[allow(dead_code)]
@@ -107,7 +107,7 @@ mod runtime_tests {
 
     #[test]
     fn test_wasm_context_and_host_function_access() {
-        use crate::wasm::runtime::WasmContext;
+        use super::runtime::WasmContext;
 
         let env = setup_test_env();
         let db = setup_test_db("context");

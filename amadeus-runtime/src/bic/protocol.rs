@@ -7,7 +7,7 @@ pub fn tx_cost_per_byte(_epoch: u64, tx_encoded_len: usize) -> i128 {
     let bytes = tx_encoded_len + 32 + 96;
     // integer division
     let cost_units = 1 + (bytes / 1024) * 1;
-    coin::to_cents(cost_units as i128)
+    coin::to_cents(cost_units as u128) as i128
 }
 
 pub fn pay_cost(env: &mut super::super::apply::ApplyEnv, cost: i128) {

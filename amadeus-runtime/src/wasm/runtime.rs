@@ -1,6 +1,6 @@
 use crate::bic::epoch::CallEnv;
 use crate::kv;
-use crate::wasm::opcodes::{RpcMessage, RpcResponse};
+use super::opcodes::{RpcMessage, RpcResponse};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use wasmer::{Function, FunctionEnv, FunctionEnvMut, Instance, Memory, Module, Store, Value, imports};

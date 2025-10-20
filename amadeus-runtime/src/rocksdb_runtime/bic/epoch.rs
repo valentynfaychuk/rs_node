@@ -6,9 +6,9 @@ use amadeus_utils::rocksdb::RocksDb;
 use bitvec::prelude::*;
 use eetf::Term;
 
-use crate::bic::coin;
-use crate::bic::sol;
-use crate::bic::sol::Solution;
+use crate::rocksdb_runtime::bic::coin;
+use crate::rocksdb_runtime::bic::sol;
+use crate::rocksdb_runtime::bic::sol::Solution;
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum EpochError {
@@ -275,7 +275,7 @@ impl Epoch {
     /// Dispatch a call with db access
     pub fn call(
         &self,
-        ctx: &mut crate::kv::ApplyCtx,
+        ctx: &mut crate::rocksdb_runtime::kv::ApplyCtx,
         op: EpochCall,
         env: &CallEnv,
         db: &amadeus_utils::rocksdb::RocksDb,
@@ -291,7 +291,7 @@ impl Epoch {
 
     fn submit_sol(
         &self,
-        ctx: &mut crate::kv::ApplyCtx,
+        ctx: &mut crate::rocksdb_runtime::kv::ApplyCtx,
         env: &CallEnv,
         db: &amadeus_utils::rocksdb::RocksDb,
         sol_bytes: &[u8],
@@ -299,7 +299,7 @@ impl Epoch {
         let hash = blake3::hash(sol_bytes);
 
         // Bloom filter: check and set bits from hash segments (matching Elixir implementation)
-        let segs = crate::bic::sol_bloom::segs(&hash);
+        let segs = super::sol_bloom::segs(&hash);
         let mut any_bit_newly_set = false;
         // Only process first segment to match Elixir
         for seg in segs.iter().take(1) {
@@ -352,7 +352,7 @@ impl Epoch {
 
     fn set_emission_address(
         &self,
-        ctx: &mut crate::kv::ApplyCtx,
+        ctx: &mut crate::rocksdb_runtime::kv::ApplyCtx,
         env: &CallEnv,
         db: &amadeus_utils::rocksdb::RocksDb,
         address: &[u8; 48],
@@ -371,7 +371,7 @@ impl Epoch {
     #[allow(clippy::too_many_arguments)]
     fn slash_trainer(
         &self,
-        ctx: &mut crate::kv::ApplyCtx,
+        ctx: &mut crate::rocksdb_runtime::kv::ApplyCtx,
         env: &CallEnv,
         db: &amadeus_utils::rocksdb::RocksDb,
         epoch: u64,
@@ -499,7 +499,7 @@ impl Epoch {
     /// Epoch transition: distribute emissions, select validators, clear bloom filters
     pub fn next(
         &self,
-        ctx: &mut crate::kv::ApplyCtx,
+        ctx: &mut crate::rocksdb_runtime::kv::ApplyCtx,
         db: &amadeus_utils::rocksdb::RocksDb,
         env: &CallEnv,
     ) -> Result<(), EpochError> {

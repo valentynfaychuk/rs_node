@@ -2,8 +2,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 
-use crate::wasm::base::{WasmBridgeMsg, WasmCallResult};
-use crate::wasm::runtime;
+use super::base::{WasmBridgeMsg, WasmCallResult};
+use super::runtime;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WasmError {

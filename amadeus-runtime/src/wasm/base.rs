@@ -4,7 +4,7 @@ pub struct WasmCallResult {
     pub exec_used: Option<u64>,
 }
 use crate::bic::epoch::CallEnv;
-use crate::wasm::safe;
+use super::safe;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
