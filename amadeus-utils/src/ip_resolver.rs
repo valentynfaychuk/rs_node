@@ -161,9 +161,10 @@ async fn get_ip_http() -> Result<Option<String>, std::io::Error> {
     };
 
     if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body_bytes)
-        && let Some(ip) = v.get("ip").and_then(|x| x.as_str()) {
-            return Ok(Some(ip.to_string()));
-        }
+        && let Some(ip) = v.get("ip").and_then(|x| x.as_str())
+    {
+        return Ok(Some(ip.to_string()));
+    }
     Ok(None)
 }
 

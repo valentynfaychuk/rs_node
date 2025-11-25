@@ -534,9 +534,7 @@ pub mod snapshot {
             }
             shift += 7;
             if shift >= 64 {
-                return Err(Error::TokioIo(
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, "varint too large"),
-                ));
+                return Err(Error::TokioIo(std::io::Error::new(std::io::ErrorKind::InvalidData, "varint too large")));
             }
         }
         Ok(result)
@@ -562,9 +560,10 @@ pub mod snapshot {
     /// Export a column family to a deterministic snapshot file (.spk)
     pub async fn export_spk(db: &super::RocksDb, cf_name: &str, output_path: &Path) -> Result<Manifest, Error> {
         let cf_handle = db.inner.cf_handle(cf_name).ok_or_else(|| {
-            Error::TokioIo(
-                std::io::Error::new(std::io::ErrorKind::NotFound, format!("column family '{}' not found", cf_name)),
-            )
+            Error::TokioIo(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("column family '{}' not found", cf_name),
+            ))
         })?;
 
         let snapshot = db.inner.snapshot();
@@ -642,12 +641,10 @@ pub mod snapshot {
 
         // Verify manifest matches request
         if manifest.cf != cf_name {
-            return Err(Error::TokioIo(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("manifest cf '{}' != requested cf '{}'", manifest.cf, cf_name),
-                ),
-            ));
+            return Err(Error::TokioIo(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("manifest cf '{}' != requested cf '{}'", manifest.cf, cf_name),
+            )));
         }
 
         let file = File::open(spk_in).await.map_err(Error::TokioIo)?;
@@ -657,9 +654,7 @@ pub mod snapshot {
         let mut magic_buf = [0u8; 4];
         reader.read_exact(&mut magic_buf).await.map_err(Error::TokioIo)?;
         if magic_buf != MAGIC {
-            return Err(Error::TokioIo(
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid magic header"),
-            ));
+            return Err(Error::TokioIo(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid magic header")));
         }
 
         // Create a channel for batching writes
@@ -705,9 +700,9 @@ pub mod snapshot {
             let mut value = vec![0u8; value_len as usize];
             reader.read_exact(&mut value).await.map_err(Error::TokioIo)?;
 
-            tx.send((key, value)).await.map_err(|_| {
-                Error::TokioIo(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "channel closed"))
-            })?;
+            tx.send((key, value))
+                .await
+                .map_err(|_| Error::TokioIo(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "channel closed")))?;
 
             records_read += 1;
         }
@@ -740,9 +735,7 @@ pub mod snapshot {
         read_opts.set_snapshot(&snapshot);
 
         let cf_handle = db.inner.cf_handle(cf_name).ok_or_else(|| {
-            Error::TokioIo(
-                std::io::Error::new(std::io::ErrorKind::NotFound, format!("cf '{}' missing", cf_name)),
-            )
+            Error::TokioIo(std::io::Error::new(std::io::ErrorKind::NotFound, format!("cf '{}' missing", cf_name)))
         })?;
 
         let iterator = db.inner.iterator_cf_opt(&cf_handle, read_opts, IteratorMode::Start);

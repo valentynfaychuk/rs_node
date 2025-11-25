@@ -359,17 +359,19 @@ fn parse_entry_filename(filename: &str) -> Option<(u64, u64)> {
     // Look for epoch in directory part (e.g., "epoch-123")
     for part in &parts {
         if let Some(epoch_str) = part.strip_prefix("epoch-")
-            && let Ok(e) = epoch_str.parse::<u64>() {
-                epoch = Some(e);
-            }
+            && let Ok(e) = epoch_str.parse::<u64>()
+        {
+            epoch = Some(e);
+        }
     }
 
     // Look for height in filename part (e.g., "entry-456")
     if let Some(filename_part) = parts.last()
         && let Some(height_str) = filename_part.strip_prefix("entry-")
-            && let Ok(h) = height_str.parse::<u64>() {
-                height = Some(h);
-            }
+        && let Ok(h) = height_str.parse::<u64>()
+    {
+        height = Some(h);
+    }
 
     match (epoch, height) {
         (Some(e), Some(h)) => Some((e, h)),

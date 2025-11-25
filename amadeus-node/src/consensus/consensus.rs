@@ -776,7 +776,6 @@ pub fn best_entry_for_height(fabric: &Fabric, height: u64) -> Result<Vec<ScoredE
 pub fn proc_consensus(fabric: &Fabric) -> Result<(), Error> {
     // Skip processing if no temporal_tip or if entry data not available yet
     if fabric.get_temporal_entry()?.is_none() {
-        panic!();
         return Ok(());
     }
 
@@ -1010,9 +1009,10 @@ pub async fn proc_entries(fabric: &Fabric, config: &crate::config::Config, ctx: 
 
         // broadcast attestation if synced and we're a trainer
         if let Some(attestation_packed) = attestation_packed
-            && is_quorum_synced_off_by_x(fabric, 6) {
-                broadcast_attestation(ctx, &attestation_packed, &entry.hash).await;
-            }
+            && is_quorum_synced_off_by_x(fabric, 6)
+        {
+            broadcast_attestation(ctx, &attestation_packed, &entry.hash).await;
+        }
 
         // remove transactions from pool (matches Elixir TXPool.delete_packed)
         delete_transactions_from_pool(&entry.txs);

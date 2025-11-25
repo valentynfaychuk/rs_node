@@ -108,9 +108,10 @@ pub fn kv_get_next(env: &mut ApplyEnv, prefix: &[u8], key: &[u8]) -> Option<(Vec
 
     // skip the exact match key if found
     if let Some(k) = iter.key()
-        && k == &seek[..] {
-            iter.next();
-        }
+        && k == &seek[..]
+    {
+        iter.next();
+    }
 
     match (iter.key(), iter.value()) {
         (Some(k), Some(v)) if k.starts_with(prefix) => {
@@ -136,9 +137,10 @@ pub fn kv_get_prev(env: &mut ApplyEnv, prefix: &[u8], key: &[u8]) -> Option<(Vec
 
     // skip the exact match key if found
     if let Some(k) = iter.key()
-        && k == &seek[..] {
-            iter.prev();
-        }
+        && k == &seek[..]
+    {
+        iter.prev();
+    }
 
     match (iter.key(), iter.value()) {
         (Some(k), Some(v)) if k.starts_with(prefix) => {

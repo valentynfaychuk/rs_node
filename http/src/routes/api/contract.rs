@@ -124,10 +124,11 @@ pub async fn get_token_richlist(State(ctx): State<Arc<Context>>) -> Json<Richlis
                     if top_balances.len() < 100 {
                         top_balances.push(Reverse((balance, account)));
                     } else if let Some(&Reverse((min_balance, _))) = top_balances.peek()
-                        && balance > min_balance {
-                            top_balances.pop();
-                            top_balances.push(Reverse((balance, account)));
-                        }
+                        && balance > min_balance
+                    {
+                        top_balances.pop();
+                        top_balances.push(Reverse((balance, account)));
+                    }
                 }
             }
         }

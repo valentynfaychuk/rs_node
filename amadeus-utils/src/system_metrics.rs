@@ -51,23 +51,24 @@ mod inner {
                     interval.tick().await;
 
                     if let Ok(current_pid) = sysinfo::get_current_pid()
-                        && let Ok(mut system) = SYSTEM_MONITOR.lock() {
-                            system.refresh_processes(ProcessesToUpdate::Some(&[current_pid]), true);
-                            system.refresh_memory(); // Refresh system memory info
+                        && let Ok(mut system) = SYSTEM_MONITOR.lock()
+                    {
+                        system.refresh_processes(ProcessesToUpdate::Some(&[current_pid]), true);
+                        system.refresh_memory(); // Refresh system memory info
 
-                            if let Some(process) = system.process(current_pid) {
-                                let cpu_usage = process.cpu_usage();
-                                let memory_usage = process.memory();
+                        if let Some(process) = system.process(current_pid) {
+                            let cpu_usage = process.cpu_usage();
+                            let memory_usage = process.memory();
 
-                                // Store CPU usage with precision (multiply by 100)
-                                CACHED_CPU_USAGE.store((cpu_usage * 100.0) as u32, Ordering::Relaxed);
-                                CACHED_MEMORY_USAGE.store(memory_usage, Ordering::Relaxed);
-                            }
-
-                            // Cache total system memory
-                            let total_memory = system.total_memory();
-                            CACHED_TOTAL_MEMORY.store(total_memory, Ordering::Relaxed);
+                            // Store CPU usage with precision (multiply by 100)
+                            CACHED_CPU_USAGE.store((cpu_usage * 100.0) as u32, Ordering::Relaxed);
+                            CACHED_MEMORY_USAGE.store(memory_usage, Ordering::Relaxed);
                         }
+
+                        // Cache total system memory
+                        let total_memory = system.total_memory();
+                        CACHED_TOTAL_MEMORY.store(total_memory, Ordering::Relaxed);
+                    }
                 }
             });
         });

@@ -133,15 +133,27 @@ pub fn parse_vecpak_bin(bin: &[u8]) -> Result<Box<dyn Protocol>, Error> {
         PingReply::TYPENAME => Box::new(from_slice::<PingReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
         Entry::TYPENAME => Box::new(Entry::from_vecpak_map_validated(map)?),
         EventTip::TYPENAME => Box::new(EventTip::from_vecpak_map_validated(map)?),
-        EventAttestation::TYPENAME => Box::new(from_slice::<EventAttestation>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        EventAttestation::TYPENAME => {
+            Box::new(from_slice::<EventAttestation>(bin).map_err(|e| Error::Vecpak(e.to_string()))?)
+        }
         Solution::TYPENAME => Box::new(Solution::from_vecpak_map_validated(map)?),
         EventTx::TYPENAME => Box::new(from_slice::<EventTx>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
         GetPeerAnrs::TYPENAME => Box::new(from_slice::<GetPeerAnrs>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
-        GetPeerAnrsReply::TYPENAME => Box::new(from_slice::<GetPeerAnrsReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
-        NewPhoneWhoDis::TYPENAME => Box::new(from_slice::<NewPhoneWhoDis>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
-        NewPhoneWhoDisReply::TYPENAME => Box::new(from_slice::<NewPhoneWhoDisReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
-        SpecialBusiness::TYPENAME => Box::new(from_slice::<SpecialBusiness>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
-        SpecialBusinessReply::TYPENAME => Box::new(from_slice::<SpecialBusinessReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        GetPeerAnrsReply::TYPENAME => {
+            Box::new(from_slice::<GetPeerAnrsReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?)
+        }
+        NewPhoneWhoDis::TYPENAME => {
+            Box::new(from_slice::<NewPhoneWhoDis>(bin).map_err(|e| Error::Vecpak(e.to_string()))?)
+        }
+        NewPhoneWhoDisReply::TYPENAME => {
+            Box::new(from_slice::<NewPhoneWhoDisReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?)
+        }
+        SpecialBusiness::TYPENAME => {
+            Box::new(from_slice::<SpecialBusiness>(bin).map_err(|e| Error::Vecpak(e.to_string()))?)
+        }
+        SpecialBusinessReply::TYPENAME => {
+            Box::new(from_slice::<SpecialBusinessReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?)
+        }
         Catchup::TYPENAME => Box::new(Catchup::from_vecpak_map_validated(map)?),
         CatchupReply::TYPENAME => Box::new(CatchupReply::from_vecpak_map_validated(map)?),
         _ => return Err(Error::ParseError("op")),
@@ -317,11 +329,12 @@ impl Protocol for Catchup {
                     flag_pairs.push((vecpak::Term::Binary(b"a".to_vec()), vecpak::Term::Binary(b"true".to_vec())));
                 }
                 if let Some(ref hashes) = flag.hashes
-                    && !hashes.is_empty() {
-                        let hashes_terms: Vec<vecpak::Term> =
-                            hashes.iter().map(|h| vecpak::Term::Binary(h.clone())).collect();
-                        flag_pairs.push((vecpak::Term::Binary(b"hashes".to_vec()), vecpak::Term::List(hashes_terms)));
-                    }
+                    && !hashes.is_empty()
+                {
+                    let hashes_terms: Vec<vecpak::Term> =
+                        hashes.iter().map(|h| vecpak::Term::Binary(h.clone())).collect();
+                    flag_pairs.push((vecpak::Term::Binary(b"hashes".to_vec()), vecpak::Term::List(hashes_terms)));
+                }
                 vecpak::Term::PropList(flag_pairs)
             })
             .collect();
@@ -780,7 +793,7 @@ impl NewPhoneWhoDis {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct NewPhoneWhoDisReply {
     op: String,
-    pub anr: Anr,
+    anr: Anr,
 }
 
 impl Typename for NewPhoneWhoDisReply {
@@ -802,7 +815,7 @@ impl Protocol for NewPhoneWhoDisReply {
     #[instrument(skip(self, ctx), fields(src = %src), name = "NewPhoneWhoDisReply::handle")]
     async fn handle(&self, ctx: &Context, src: Ipv4Addr) -> Result<Vec<Instruction>, Error> {
         // SECURITY: ip address spoofing protection
-        if src != self.anr.ip4 {
+        if src.to_string() != self.anr.ip4 {
             return Err(Error::ParseError("anr_ip_mismatch"));
         }
 
@@ -1353,10 +1366,7 @@ mod tests {
         let tx1 = vec![1u8, 2, 3, 4, 5];
         let tx2 = vec![6u8, 7, 8, 9, 10];
 
-        let tx_terms: Vec<vecpak::Term> = vec![
-            vecpak::Term::Binary(tx1.clone()),
-            vecpak::Term::Binary(tx2.clone()),
-        ];
+        let tx_terms: Vec<vecpak::Term> = vec![vecpak::Term::Binary(tx1.clone()), vecpak::Term::Binary(tx2.clone())];
         let manual_pairs = vec![
             (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"event_tx".to_vec())),
             (vecpak::Term::Binary(b"txs_packed".to_vec()), vecpak::Term::List(tx_terms)),
@@ -1379,17 +1389,16 @@ mod tests {
         let peer1 = [192u8, 168, 1, 1];
         let peer2 = [10u8, 0, 0, 1];
 
-        let has_peers_terms: Vec<vecpak::Term> = vec![
-            vecpak::Term::Binary(peer1.to_vec()),
-            vecpak::Term::Binary(peer2.to_vec()),
-        ];
+        let has_peers_terms: Vec<vecpak::Term> =
+            vec![vecpak::Term::Binary(peer1.to_vec()), vecpak::Term::Binary(peer2.to_vec())];
         let manual_pairs = vec![
             (vecpak::Term::Binary(b"hasPeersb3f4".to_vec()), vecpak::Term::List(has_peers_terms)),
             (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"get_peer_anrs".to_vec())),
         ];
         let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
 
-        let decoded_struct = amadeus_utils::vecpak::from_slice::<GetPeerAnrs>(&manual_encoded).expect("decode to struct");
+        let decoded_struct =
+            amadeus_utils::vecpak::from_slice::<GetPeerAnrs>(&manual_encoded).expect("decode to struct");
         assert_eq!(decoded_struct.has_peers_b3f4, vec![peer1, peer2]);
 
         let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");
@@ -1402,12 +1411,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_honest_roundtrip_new_phone_who_dis() {
-        let manual_pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"new_phone_who_dis".to_vec())),
-        ];
+        let manual_pairs =
+            vec![(vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"new_phone_who_dis".to_vec()))];
         let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
 
-        let decoded_struct = amadeus_utils::vecpak::from_slice::<NewPhoneWhoDis>(&manual_encoded).expect("decode to struct");
+        let decoded_struct =
+            amadeus_utils::vecpak::from_slice::<NewPhoneWhoDis>(&manual_encoded).expect("decode to struct");
 
         let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");
 
@@ -1426,7 +1435,8 @@ mod tests {
         ];
         let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
 
-        let decoded_struct = amadeus_utils::vecpak::from_slice::<SpecialBusiness>(&manual_encoded).expect("decode to struct");
+        let decoded_struct =
+            amadeus_utils::vecpak::from_slice::<SpecialBusiness>(&manual_encoded).expect("decode to struct");
         assert_eq!(decoded_struct.business, business_data.clone());
 
         let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");

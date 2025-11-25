@@ -242,7 +242,7 @@ impl NodePeers {
             let anrs = node_registry.get_all().await;
 
             for anr in anrs {
-                if anr.ip4 == *ip {
+                if anr.ip4 == ip.to_string() {
                     handshake_status = if anr.handshaked { HandshakeStatus::Completed } else { HandshakeStatus::None };
                     break;
                 }
@@ -387,9 +387,10 @@ impl NodePeers {
         self.peers
             .scan(|_, peer| {
                 if let Some(ref peer_pk) = peer.pk
-                    && peer_pk == pk {
-                        found_secret = peer.shared_secret.clone();
-                    }
+                    && peer_pk == pk
+                {
+                    found_secret = peer.shared_secret.clone();
+                }
             })
             .await;
 
@@ -429,9 +430,10 @@ impl NodePeers {
         self.peers
             .scan(|_, peer| {
                 if let Some(ref pk) = peer.pk
-                    && trainers_set.contains(pk) {
-                        peers.push(peer.clone());
-                    }
+                    && trainers_set.contains(pk)
+                {
+                    peers.push(peer.clone());
+                }
             })
             .await;
 

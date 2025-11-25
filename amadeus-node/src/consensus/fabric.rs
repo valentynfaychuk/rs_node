@@ -254,17 +254,16 @@ impl Fabric {
     pub fn insert_consensus(&self, consensus: &crate::consensus::consensus::Consensus) -> Result<(), Error> {
         use amadeus_utils::vecpak::{self, Term as VTerm};
 
-        let key =
-            format!("consensus:{}:{}", hex::encode(consensus.entry_hash), hex::encode(consensus.mutations_hash));
+        let key = format!("consensus:{}:{}", hex::encode(consensus.entry_hash), hex::encode(consensus.mutations_hash));
 
         if let Some(existing_bin) = self.db.get(CF_ATTESTATION, key.as_bytes())?
             && let Ok(existing_term) = decode(&existing_bin)
-                && let Some(existing_mask) = extract_mask_from_consensus_term(&existing_term)
-                    && (existing_mask.all()
-                        || (!consensus.mask.is_empty() && existing_mask.count_ones() >= consensus.mask.count_ones()))
-                    {
-                        return Ok(());
-                    }
+            && let Some(existing_mask) = extract_mask_from_consensus_term(&existing_term)
+            && (existing_mask.all()
+                || (!consensus.mask.is_empty() && existing_mask.count_ones() >= consensus.mask.count_ones()))
+        {
+            return Ok(());
+        }
 
         let mask = self.validate_consensus(consensus)?;
 
@@ -340,12 +339,13 @@ impl Fabric {
                 let parts: Vec<&str> = key_str.split(':').collect();
                 if parts.len() >= 3
                     && let Ok(mutations_hash) = hex::decode(parts[2])
-                        && mutations_hash.len() == 32
-                            && let Some(stored) = parse_stored_consensus(&value) {
-                                let mut hash_array = [0u8; 32];
-                                hash_array.copy_from_slice(&mutations_hash);
-                                consensuses.push((hash_array, stored));
-                            }
+                    && mutations_hash.len() == 32
+                    && let Some(stored) = parse_stored_consensus(&value)
+                {
+                    let mut hash_array = [0u8; 32];
+                    hash_array.copy_from_slice(&mutations_hash);
+                    consensuses.push((hash_array, stored));
+                }
             }
         }
 
@@ -404,9 +404,10 @@ impl Fabric {
                 }
                 // Try ETF term (for Elixir compatibility)
                 if let Ok(term) = eetf::Term::decode(&mut std::io::Cursor::new(&hb))
-                    && let Some(height) = TermExt::get_integer(&term) {
-                        return Ok(Some(height as u64));
-                    }
+                    && let Some(height) = TermExt::get_integer(&term)
+                {
+                    return Ok(Some(height as u64));
+                }
                 Err(Error::KvCell("temporal_height"))
             }
             None => Ok(None),
@@ -552,9 +553,10 @@ impl Fabric {
         let key = format!("entry:{}:seentime", hex::encode(hash));
         if let Some(bin) = self.db.get(CF_ENTRY_META, key.as_bytes())? {
             if let Ok(s) = std::str::from_utf8(&bin)
-                && let Ok(val) = s.parse::<u64>() {
-                    return Ok(Some(val));
-                }
+                && let Ok(val) = s.parse::<u64>()
+            {
+                return Ok(Some(val));
+            }
             return Err(Error::BadEtf("seen_time_format"));
         }
         Ok(None)
@@ -659,9 +661,10 @@ impl Fabric {
                 break;
             }
             if let Ok(key_str) = std::str::from_utf8(&k)
-                && key_str.starts_with("by_height:") {
-                    deleted_hashes.push(v.to_vec());
-                }
+                && key_str.starts_with("by_height:")
+            {
+                deleted_hashes.push(v.to_vec());
+            }
         }
 
         let ops = deleted_hashes.len();

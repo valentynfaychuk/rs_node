@@ -6,12 +6,56 @@ use crate::utils::version::Ver;
 use amadeus_utils::vecpak;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 const UDP_PACKETS_LIMIT: u64 = 40_000;
+
+// Custom serde module for [u8; 48] arrays to match serde_bytes behavior
+mod serde_bytes_48 {
+    use serde::{Deserializer, Serializer};
+    pub fn serialize<S>(bytes: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(bytes)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 48], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = serde_bytes::deserialize(deserializer)?;
+        if bytes.len() != 48 {
+            return Err(serde::de::Error::custom(format!("expected 48 bytes, got {}", bytes.len())));
+        }
+        let mut array = [0u8; 48];
+        array.copy_from_slice(&bytes);
+        Ok(array)
+    }
+}
+
+// Custom serde module for Ver to serialize as string
+mod serde_ver_as_string {
+    use crate::utils::version::Ver;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(ver: &Ver, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&ver.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Ver, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ver::try_from(s.as_str()).map_err(serde::de::Error::custom)
+    }
+}
 
 pub static PROTO_RATE_LIMITS: Lazy<HashMap<&'static str, u64>> = Lazy::new(|| {
     use crate::consensus::doms::attestation::EventAttestation;
@@ -71,19 +115,23 @@ impl crate::utils::misc::Typename for Error {
     }
 }
 
-#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
 #[allow(non_snake_case)]
 pub struct Anr {
-    pub ip4: Ipv4Addr,
-    #[serde_as(as = "[_; 48]")]
+    pub ip4: String,
+    #[serde(with = "serde_bytes_48")]
     pub pk: [u8; 48],
+    #[serde(with = "serde_bytes")]
     pub pop: Vec<u8>,
     pub port: u16,
+    #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
     pub ts: u32,
+    #[serde(with = "serde_ver_as_string")]
     pub version: Ver,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub anr_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub anr_desc: Option<String>,
     // runtime fields
     #[serde(skip)]
@@ -116,7 +164,7 @@ impl From<SeedANR> for Anr {
         pk_b3_f4.copy_from_slice(&pk_b3[0..4]);
 
         Anr {
-            ip4: seed.ip4.parse().unwrap_or(Ipv4Addr::new(0, 0, 0, 0)),
+            ip4: seed.ip4,
             pk: seed.pk,
             pop: vec![0u8; 96], // seed anrs don't include pop in config
             port: seed.port,
@@ -172,7 +220,7 @@ impl Anr {
         pk_b3_f4.copy_from_slice(&pk_b3[0..4]);
 
         let mut anr = Anr {
-            ip4,
+            ip4: ip4.to_string(),
             pk: *pk,
             pop: pop.to_vec(),
             port: 36969,
@@ -204,8 +252,7 @@ impl Anr {
     /// Parse ANR from vecpak PropListMap (primary format)
     pub fn from_vecpak_map(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
         // ip4 is stored as string in elixir format: "127.0.0.1"
-        let ip4_str = map.get_string(b"ip4").ok_or(Error::ParseError("ip4"))?;
-        let ip4 = ip4_str.parse::<Ipv4Addr>().map_err(|_| Error::ParseError("ip4_parse"))?;
+        let ip4 = map.get_string(b"ip4").ok_or(Error::ParseError("ip4"))?;
 
         let pk = map.get_binary::<[u8; 48]>(b"pk").ok_or(Error::ParseError("pk"))?;
         let pop = map.get_binary::<Vec<u8>>(b"pop").ok_or(Error::ParseError("pop"))?;
@@ -370,7 +417,7 @@ impl Anr {
     // pack anr for network transmission
     pub fn pack(&self) -> Anr {
         Anr {
-            ip4: self.ip4,
+            ip4: self.ip4.clone(),
             pk: self.pk,
             pop: self.pop.clone(),
             port: self.port,
@@ -463,8 +510,9 @@ impl NodeAnrs {
 
     /// Get anr by IP address
     pub async fn get_by_ip4(&self, ip4: Ipv4Addr) -> Option<Anr> {
+        let ip4_str = ip4.to_string();
         let map = self.store.read().await;
-        map.values().find(|anr| anr.ip4 == ip4).cloned()
+        map.values().find(|anr| anr.ip4 == ip4_str).cloned()
     }
 
     /// Get all anrs
@@ -483,8 +531,9 @@ impl NodeAnrs {
 
     /// Increment and return the frames counter
     pub async fn is_within_udp_limit(&self, ip4: Ipv4Addr) -> Option<bool> {
+        let ip4_str = ip4.to_string();
         let mut map = self.store.write().await;
-        if let Some(anr) = map.values_mut().find(|anr| anr.ip4 == ip4) {
+        if let Some(anr) = map.values_mut().find(|anr| anr.ip4 == ip4_str) {
             anr.udp_packets += 1;
             return Some(anr.udp_packets < UDP_PACKETS_LIMIT);
         }
@@ -495,11 +544,12 @@ impl NodeAnrs {
     pub async fn is_within_proto_limit(&self, pk: &[u8], typename: &str) -> Option<bool> {
         let mut map = self.store.write().await;
         if let Some(anr) = map.get_mut(pk)
-            && let Some(limit) = PROTO_RATE_LIMITS.get(typename) {
-                let counter = anr.proto_reqs.entry(typename.to_string()).or_insert(0);
-                *counter += 1;
-                return Some(*counter < *limit);
-            }
+            && let Some(limit) = PROTO_RATE_LIMITS.get(typename)
+        {
+            let counter = anr.proto_reqs.entry(typename.to_string()).or_insert(0);
+            *counter += 1;
+            return Some(*counter < *limit);
+        }
         None
     }
 
@@ -552,7 +602,9 @@ impl NodeAnrs {
 
         for (_, v) in map.iter() {
             if !v.handshaked {
-                results.push(v.ip4);
+                if let Ok(ip4) = v.ip4.parse() {
+                    results.push(ip4);
+                }
             }
         }
 
@@ -567,8 +619,9 @@ impl NodeAnrs {
 
     /// Check if node is handshaked with valid ip4
     pub async fn handshaked_and_valid_ip4(&self, pk: &[u8], ip4: &Ipv4Addr) -> bool {
+        let ip4_str = ip4.to_string();
         let map = self.store.read().await;
-        map.get(pk).map(|v| v.handshaked && v.ip4 == *ip4).unwrap_or(false)
+        map.get(pk).map(|v| v.handshaked && v.ip4 == ip4_str).unwrap_or(false)
     }
 
     /// Get random verified nodes
@@ -630,7 +683,9 @@ impl NodeAnrs {
 
         for (_, v) in map.iter() {
             if v.handshaked {
-                results.push(v.ip4);
+                if let Ok(ip4) = v.ip4.parse() {
+                    results.push(ip4);
+                }
             }
         }
 
@@ -658,7 +713,9 @@ impl NodeAnrs {
         let map = self.store.read().await;
         for v in map.values() {
             if pk_set.contains(&v.pk) {
-                ips.push(v.ip4);
+                if let Ok(ip4) = v.ip4.parse() {
+                    ips.push(ip4);
+                }
             }
         }
 
@@ -681,6 +738,7 @@ impl NodeAnrs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::protocol::{NewPhoneWhoDis, NewPhoneWhoDisReply};
     use amadeus_utils::bls12_381;
 
     impl NodeAnrs {
@@ -715,7 +773,7 @@ mod tests {
         pk_b3_f4.copy_from_slice(&pk_b3[0..4]);
 
         let anr = Anr {
-            ip4,
+            ip4: ip4.to_string(),
             pk,
             pop,
             port: 36969,
@@ -792,7 +850,7 @@ mod tests {
 
         // insert initial anr
         let anr1 = Anr {
-            ip4,
+            ip4: ip4.to_string(),
             pk,
             pop: pop.clone(),
             port: 36969,
@@ -816,7 +874,7 @@ mod tests {
 
         // try to insert older anr (should not update)
         let anr2 = Anr {
-            ip4: Ipv4Addr::new(10, 0, 0, 1),
+            ip4: Ipv4Addr::new(10, 0, 0, 1).to_string(),
             pk,
             pop: pop.clone(),
             port: 36969,
@@ -839,13 +897,13 @@ mod tests {
 
         // verify old anr was not updated
         let retrieved = registry.get(&pk).await.unwrap();
-        assert_eq!(retrieved.ip4, Ipv4Addr::new(192, 168, 1, 1));
+        assert_eq!(retrieved.ip4, Ipv4Addr::new(192, 168, 1, 1).to_string());
         assert_eq!(retrieved.ts, 1000);
         assert!(retrieved.handshaked);
 
         // insert newer anr with same ip (should preserve handshake)
         let anr3 = Anr {
-            ip4,
+            ip4: ip4.to_string(),
             pk,
             pop: pop.clone(),
             port: 36969,
@@ -873,7 +931,7 @@ mod tests {
 
         // insert newer anr with different ip (should reset handshake)
         let anr4 = Anr {
-            ip4: Ipv4Addr::new(10, 0, 0, 1),
+            ip4: Ipv4Addr::new(10, 0, 0, 1).to_string(),
             pk,
             pop,
             port: 36969,
@@ -896,7 +954,7 @@ mod tests {
 
         let retrieved = registry.get(&pk).await.unwrap();
         assert_eq!(retrieved.ts, 3000);
-        assert_eq!(retrieved.ip4, Ipv4Addr::new(10, 0, 0, 1));
+        assert_eq!(retrieved.ip4, Ipv4Addr::new(10, 0, 0, 1).to_string());
         assert!(!retrieved.handshaked); // should be reset
         assert_eq!(retrieved.error, None); // should be reset
         assert_eq!(retrieved.error_tries, 0); // should be reset
@@ -921,7 +979,7 @@ mod tests {
             pk_b3_f4.copy_from_slice(&pk_b3[0..4]);
 
             let anr = Anr {
-                ip4: Ipv4Addr::new(192, 168, 1, i), // different IPs
+                ip4: Ipv4Addr::new(192, 168, 1, i).to_string(), // different IPs
                 pk,
                 pop: vec![i as u8; 96],
                 port: 36969,
@@ -1021,5 +1079,20 @@ mod tests {
             }
             _ => panic!("Expected PropList for ANR"),
         }
+    }
+
+    #[test]
+    fn handshake_compatibility() {
+        let p_hex = "0701010501026f700501116e65775f70686f6e655f77686f5f646973";
+        let p_bytes = hex::decode(p_hex).expect("valid hex");
+        let npwd: NewPhoneWhoDis = amadeus_utils::vecpak::from_slice(&p_bytes).unwrap();
+        let rt_bytes = amadeus_utils::vecpak::to_vec(&npwd).unwrap();
+        assert_eq!(rt_bytes, p_bytes);
+
+        let p_hex = "0701020501026f700501176e65775f70686f6e655f77686f5f6469735f7265706c79050103616e72070107050102706b050130a9e81ed8c8eaaebd8dd53a889d8c5a8612ab7330275a5d39043e95200e7c1b66f0dc00c5307e867a55a9ad9e7ae4b9f005010274730304692634f205010369703405010c37322e392e3134342e313130050103706f70050160b62a96d62af0d2d7006ab560c64bde562df13ae642380a31d935276412c59f9944dceaa4060903e4ead197e97ad1654910be87ac556a5063e1d68df542aab1a3f75df3eab891a7cab572ba7170716c5487183ef28ef89f7c7555be2bb1d41218050104706f72740302906905010776657273696f6e050105312e332e300501097369676e6174757265050160b62d43994fa7614138d205ecefeb1677d4998574aac1db8fdd5673de4e1d2ae8391c4cf703007ce37778e20624650143068c59596b5838536ecfd05a0d0805b0baa04dcae97caf9f199232fbfff462ebb35bfc653576af43007ba9666a2952a7";
+        let p_bytes = hex::decode(p_hex).expect("valid hex");
+        let npwdr: NewPhoneWhoDisReply = amadeus_utils::vecpak::from_slice(&p_bytes).unwrap();
+        let rt_bytes = amadeus_utils::vecpak::to_vec(&npwdr).unwrap();
+        assert_eq!(rt_bytes, p_bytes);
     }
 }

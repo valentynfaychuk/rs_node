@@ -448,9 +448,10 @@ impl Context {
     pub async fn is_peer_handshaked(&self, ip: Ipv4Addr) -> bool {
         if let Some(peer) = self.node_peers.by_ip(ip).await
             && let Some(ref pk) = peer.pk
-                && self.node_anrs.is_handshaked(pk).await {
-                    return true;
-                }
+            && self.node_anrs.is_handshaked(pk).await
+        {
+            return true;
+        }
         false
     }
 
@@ -570,11 +571,12 @@ impl Context {
     /// Get ANR by public key (Base58 encoded)
     pub async fn get_anr_by_pk_b58(&self, pk_b58: &str) -> Option<anr::Anr> {
         if let Ok(pk_bytes) = bs58::decode(pk_b58).into_vec()
-            && pk_bytes.len() == 48 {
-                let mut pk_array = [0u8; 48];
-                pk_array.copy_from_slice(&pk_bytes);
-                return self.get_anr_by_pk(&pk_array).await;
-            }
+            && pk_bytes.len() == 48
+        {
+            let mut pk_array = [0u8; 48];
+            pk_array.copy_from_slice(&pk_bytes);
+            return self.get_anr_by_pk(&pk_array).await;
+        }
         None
     }
 
