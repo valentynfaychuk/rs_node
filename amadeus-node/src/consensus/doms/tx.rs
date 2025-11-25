@@ -362,7 +362,7 @@ pub fn pack(txu: &TxU) -> Vec<u8> {
     // Build inner tx map
     let mut tx_map = BTreeMap::new();
     tx_map.insert(Value::Bytes(b"signer".to_vec()), Value::Bytes(txu.tx.signer.to_vec()));
-    tx_map.insert(Value::Bytes(b"nonce".to_vec()), Value::Int(txu.tx.nonce as i128));
+    tx_map.insert(Value::Bytes(b"nonce".to_vec()), Value::Int(txu.tx.nonce));
     tx_map.insert(Value::Bytes(b"actions".to_vec()), Value::List(actions_list));
 
     let tx_encoded = vanilla_ser::encode(&Value::Map(tx_map));
@@ -448,7 +448,7 @@ pub fn chain_valid_txu(fabric: &crate::consensus::fabric::Fabric, txu: &TxU) -> 
         && first_arg.len() >= 4
     {
         let sol_epoch = u32::from_le_bytes([first_arg[0], first_arg[1], first_arg[2], first_arg[3]]);
-        epoch_sol_valid = crate::consensus::chain_epoch(fabric.db()) as u32 == sol_epoch;
+        epoch_sol_valid = crate::consensus::chain_epoch(fabric.db()) == sol_epoch;
     }
 
     epoch_sol_valid && nonce_valid && has_balance

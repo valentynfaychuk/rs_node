@@ -92,7 +92,7 @@ async fn get_ip_stun() -> Result<Option<Ipv4Addr>, std::io::Error> {
 
     // resolve stun.l.google.com:19302
     let addrs: Vec<SocketAddr> = net::lookup_host(("stun.l.google.com", 19302)).await?.collect();
-    if let Some(target) = addrs.iter().find(|sa| sa.is_ipv4()).cloned().or_else(|| addrs.get(0).cloned()) {
+    if let Some(target) = addrs.iter().find(|sa| sa.is_ipv4()).cloned().or_else(|| addrs.first().cloned()) {
         let _ = socket.send_to(&req, target).await?;
         let mut buf = [0u8; 1500];
         match time::timeout(Duration::from_millis(6000), socket.recv_from(&mut buf)).await {
@@ -160,11 +160,10 @@ async fn get_ip_http() -> Result<Option<String>, std::io::Error> {
         body.to_vec()
     };
 
-    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
-        if let Some(ip) = v.get("ip").and_then(|x| x.as_str()) {
+    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body_bytes)
+        && let Some(ip) = v.get("ip").and_then(|x| x.as_str()) {
             return Ok(Some(ip.to_string()));
         }
-    }
     Ok(None)
 }
 

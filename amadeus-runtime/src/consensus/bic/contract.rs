@@ -33,7 +33,7 @@ pub fn call_deploy(env: &mut ApplyEnv, args: Vec<Vec<u8>>) -> Result<()> {
 }
 
 pub fn bytecode(env: &mut ApplyEnv, account: &[u8]) -> Result<Option<Vec<u8>>> {
-    kv_get(env, &bcat(&[b"bic:contract:account:", &account, b":bytecode"]))
+    kv_get(env, &bcat(&[b"bic:contract:account:", account, b":bytecode"]))
 }
 
 /// Dispatch contract module calls

@@ -116,7 +116,7 @@ impl Fabric {
 
         let next_epoch_be = (next_epoch + 1).to_be_bytes();
         let txn = db.begin_transaction();
-        let _ = txn.put_cf(&cf_sysconf, b"finality_clean_next_epoch", &next_epoch_be);
+        let _ = txn.put_cf(&cf_sysconf, b"finality_clean_next_epoch", next_epoch_be);
         let _ = txn.commit();
     }
 
@@ -159,7 +159,7 @@ impl Fabric {
         let height_prefix = format!("by_height:{}:", pad_integer(height));
         let mut out = Vec::new();
         for (_, v) in self.db.iter_prefix(CF_ENTRY_META, height_prefix.as_bytes())?.iter() {
-            if let Some(entry_bin) = self.db.get(CF_ENTRY, &v)? {
+            if let Some(entry_bin) = self.db.get(CF_ENTRY, v)? {
                 out.push(entry_bin);
             }
         }
@@ -173,7 +173,7 @@ impl Fabric {
         let slot_prefix = format!("by_slot:{}:", pad_integer(slot));
         let mut out = Vec::new();
         for (_, v) in self.db.iter_prefix(CF_ENTRY_META, slot_prefix.as_bytes())?.iter() {
-            if let Some(entry_bin) = self.db.get(CF_ENTRY, &v)? {
+            if let Some(entry_bin) = self.db.get(CF_ENTRY, v)? {
                 out.push(entry_bin);
             }
         }
@@ -224,7 +224,7 @@ impl Fabric {
             "attestation:{}:{}:{}:",
             pad_integer(entry.header.height),
             hex::encode(entry_hash),
-            hex::encode(&my_pk)
+            hex::encode(my_pk)
         );
 
         for (_, value) in self.db.iter_prefix(CF_ATTESTATION, prefix.as_bytes())?.iter() {
@@ -239,8 +239,8 @@ impl Fabric {
                     "attestation:{}:{}:{}:{}",
                     pad_integer(entry.header.height),
                     hex::encode(entry_hash),
-                    hex::encode(&my_pk),
-                    hex::encode(&new_a.mutations_hash)
+                    hex::encode(my_pk),
+                    hex::encode(new_a.mutations_hash)
                 );
                 self.db.put(CF_ATTESTATION, key.as_bytes(), &new_a.to_vecpak_bin())?;
 
@@ -255,21 +255,18 @@ impl Fabric {
         use amadeus_utils::vecpak::{self, Term as VTerm};
 
         let key =
-            format!("consensus:{}:{}", hex::encode(&consensus.entry_hash), hex::encode(&consensus.mutations_hash));
+            format!("consensus:{}:{}", hex::encode(consensus.entry_hash), hex::encode(consensus.mutations_hash));
 
-        if let Some(existing_bin) = self.db.get(CF_ATTESTATION, key.as_bytes())? {
-            if let Ok(existing_term) = decode(&existing_bin) {
-                if let Some(existing_mask) = extract_mask_from_consensus_term(&existing_term) {
-                    if existing_mask.all()
-                        || (!consensus.mask.is_empty() && existing_mask.count_ones() >= consensus.mask.count_ones())
+        if let Some(existing_bin) = self.db.get(CF_ATTESTATION, key.as_bytes())?
+            && let Ok(existing_term) = decode(&existing_bin)
+                && let Some(existing_mask) = extract_mask_from_consensus_term(&existing_term)
+                    && (existing_mask.all()
+                        || (!consensus.mask.is_empty() && existing_mask.count_ones() >= consensus.mask.count_ones()))
                     {
                         return Ok(());
                     }
-                }
-            }
-        }
 
-        let mask = self.validate_consensus(&consensus)?;
+        let mask = self.validate_consensus(consensus)?;
 
         let consensus_term = VTerm::PropList(vec![
             (VTerm::Binary(b"mask".to_vec()), VTerm::Binary(bitvec_to_bin(&mask))),
@@ -341,17 +338,14 @@ impl Fabric {
         for (key, value) in items {
             if let Ok(key_str) = std::str::from_utf8(&key) {
                 let parts: Vec<&str> = key_str.split(':').collect();
-                if parts.len() >= 3 {
-                    if let Ok(mutations_hash) = hex::decode(parts[2]) {
-                        if mutations_hash.len() == 32 {
-                            if let Some(stored) = parse_stored_consensus(&value) {
+                if parts.len() >= 3
+                    && let Ok(mutations_hash) = hex::decode(parts[2])
+                        && mutations_hash.len() == 32
+                            && let Some(stored) = parse_stored_consensus(&value) {
                                 let mut hash_array = [0u8; 32];
                                 hash_array.copy_from_slice(&mutations_hash);
                                 consensuses.push((hash_array, stored));
                             }
-                        }
-                    }
-                }
             }
         }
 
@@ -371,7 +365,7 @@ impl Fabric {
         let cf_sysconf = self.db.inner.cf_handle(CF_SYSCONF).unwrap();
 
         let txn = self.db.begin_transaction();
-        txn.put_cf(&cf_sysconf, b"temporal_tip", &entry.hash)?;
+        txn.put_cf(&cf_sysconf, b"temporal_tip", entry.hash)?;
         let height_term = encode_safe_deterministic(&u64_to_term(entry.header.height));
         txn.put_cf(&cf_sysconf, b"temporal_height", &height_term)?;
         txn.commit()?;
@@ -409,11 +403,10 @@ impl Fabric {
                     return Ok(Some(u32::from_be_bytes(arr) as u64));
                 }
                 // Try ETF term (for Elixir compatibility)
-                if let Ok(term) = eetf::Term::decode(&mut std::io::Cursor::new(&hb)) {
-                    if let Some(height) = TermExt::get_integer(&term) {
+                if let Ok(term) = eetf::Term::decode(&mut std::io::Cursor::new(&hb))
+                    && let Some(height) = TermExt::get_integer(&term) {
                         return Ok(Some(height as u64));
                     }
-                }
                 Err(Error::KvCell("temporal_height"))
             }
             None => Ok(None),
@@ -425,7 +418,7 @@ impl Fabric {
         let cf_sysconf = self.db.inner.cf_handle(CF_SYSCONF).unwrap();
 
         let txn = self.db.begin_transaction();
-        txn.put_cf(&cf_sysconf, b"rooted_tip", &entry.hash)?;
+        txn.put_cf(&cf_sysconf, b"rooted_tip", entry.hash)?;
         let height_term = encode_safe_deterministic(&u64_to_term(entry.header.height));
         txn.put_cf(&cf_sysconf, b"rooted_height", &height_term)?;
         txn.commit()?;
@@ -517,8 +510,8 @@ impl Fabric {
             "attestation:{}:{}:{}:{}",
             amadeus_utils::database::pad_integer(entry.header.height),
             hex::encode(hash),
-            hex::encode(&attestation.signer),
-            hex::encode(&attestation.mutations_hash)
+            hex::encode(attestation.signer),
+            hex::encode(attestation.mutations_hash)
         );
         self.db.put(CF_ATTESTATION, key.as_bytes(), &attestation.to_vecpak_bin())?;
 
@@ -558,11 +551,10 @@ impl Fabric {
     pub fn get_entry_seen_time(&self, hash: &[u8; 32]) -> Result<Option<u64>, Error> {
         let key = format!("entry:{}:seentime", hex::encode(hash));
         if let Some(bin) = self.db.get(CF_ENTRY_META, key.as_bytes())? {
-            if let Ok(s) = std::str::from_utf8(&bin) {
-                if let Ok(val) = s.parse::<u64>() {
+            if let Ok(s) = std::str::from_utf8(&bin)
+                && let Ok(val) = s.parse::<u64>() {
                     return Ok(Some(val));
                 }
-            }
             return Err(Error::BadEtf("seen_time_format"));
         }
         Ok(None)
@@ -571,7 +563,7 @@ impl Fabric {
     pub fn delete_consensus(&self, hash: &[u8; 32]) -> Result<(), Error> {
         let prefix = format!("consensus:{}:", hex::encode(hash));
         for (key, _) in self.db.iter_prefix(CF_ATTESTATION, prefix.as_bytes())?.iter() {
-            self.db.delete(CF_ATTESTATION, &key)?;
+            self.db.delete(CF_ATTESTATION, key)?;
         }
         Ok(())
     }
@@ -666,11 +658,10 @@ impl Fabric {
             if k.as_ref() >= end_key.as_bytes() {
                 break;
             }
-            if let Ok(key_str) = std::str::from_utf8(&k) {
-                if key_str.starts_with("by_height:") {
+            if let Ok(key_str) = std::str::from_utf8(&k)
+                && key_str.starts_with("by_height:") {
                     deleted_hashes.push(v.to_vec());
                 }
-            }
         }
 
         let ops = deleted_hashes.len();
@@ -798,7 +789,7 @@ impl Fabric {
         let cf_sysconf = self.db.inner.cf_handle(CF_SYSCONF).unwrap();
 
         let txn = self.db.begin_transaction();
-        let _ = txn.put_cf(&cf_sysconf, b"proc_consensus", &[1]);
+        let _ = txn.put_cf(&cf_sysconf, b"proc_consensus", [1]);
         let _ = txn.commit();
     }
 
@@ -806,12 +797,12 @@ impl Fabric {
         let cf_sysconf = self.db.inner.cf_handle(CF_SYSCONF).unwrap();
 
         let txn = self.db.begin_transaction();
-        let _ = txn.put_cf(&cf_sysconf, b"proc_consensus", &[0]);
+        let _ = txn.put_cf(&cf_sysconf, b"proc_consensus", [0]);
         let _ = txn.commit();
     }
 
     pub fn is_proc_consensus(&self) -> bool {
-        self.db.get(CF_SYSCONF, b"proc_consensus").ok().flatten().map_or(false, |v| v[0] == 1)
+        self.db.get(CF_SYSCONF, b"proc_consensus").ok().flatten().is_some_and(|v| v[0] == 1)
     }
 
     // Chain state query functions - read from CF_CONTRACTSTATE column family

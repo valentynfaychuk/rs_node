@@ -2,9 +2,7 @@ use amadeus_node::config::{Config, gen_sk, get_pk, read_sk, write_sk};
 use amadeus_node::consensus::doms::tx;
 use amadeus_node::runtime_bic::contract;
 use anyhow::{Error, Result};
-use bs58;
 use clap::{Parser, Subcommand};
-use reqwest;
 use serde_json::Value as JsonValue;
 use std::fs;
 

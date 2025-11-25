@@ -78,7 +78,7 @@ impl Consensus {
         let mutations_hash: [u8; 32] =
             map.get_binary(b"mutations_hash").ok_or(Error::BadFormat("consensus.mutations_hash"))?;
         let agg_sig: [u8; 96] = map.get_binary(b"aggsig").ok_or(Error::BadFormat("consensus.aggsig"))?;
-        let mask = map.get_binary::<Vec<u8>>(b"mask").map(bin_to_bitvec).unwrap_or_else(BitVec::new);
+        let mask = map.get_binary::<Vec<u8>>(b"mask").map(bin_to_bitvec).unwrap_or_default();
 
         Ok(Self { entry_hash, mutations_hash, mask, agg_sig })
     }
@@ -410,7 +410,7 @@ fn call_exit(env: &mut ApplyEnv, next_entry: &Entry) -> Result<(), &'static str>
     env.caller_env.seedf64 = seedf64;
 
     // Update segment VR hash every 1000 blocks
-    if next_entry.header.height % 1000 == 0 {
+    if next_entry.header.height.is_multiple_of(1000) {
         consensus_kv::kv_put(env, b"bic:epoch:segment_vr_hash", &crate::utils::blake3::hash(&next_entry.header.vr))?;
     }
 
@@ -425,7 +425,7 @@ fn call_exit(env: &mut ApplyEnv, next_entry: &Entry) -> Result<(), &'static str>
         env.caller_env.call_exec_points_remaining = 0;
         env.caller_env.attached_symbol = vec![];
         env.caller_env.attached_amount = vec![];
-        let _ = amadeus_runtime::consensus::bic::epoch::Epoch.next(env);
+        amadeus_runtime::consensus::bic::epoch::Epoch.next(env);
     }
     Ok(())
 }
@@ -728,7 +728,7 @@ pub fn best_entry_for_height(fabric: &Fabric, height: u64) -> Result<Vec<ScoredE
     let rooted_tip = fabric.get_rooted_hash()?.unwrap_or([0u8; 32]);
 
     // get entries by height
-    let entry_bins = fabric.entries_by_height(height as u64)?;
+    let entry_bins = fabric.entries_by_height(height)?;
     let mut entries = Vec::new();
 
     for entry_bin in entry_bins {
@@ -776,6 +776,7 @@ pub fn best_entry_for_height(fabric: &Fabric, height: u64) -> Result<Vec<ScoredE
 pub fn proc_consensus(fabric: &Fabric) -> Result<(), Error> {
     // Skip processing if no temporal_tip or if entry data not available yet
     if fabric.get_temporal_entry()?.is_none() {
+        panic!();
         return Ok(());
     }
 
@@ -975,7 +976,7 @@ pub async fn proc_entries(fabric: &Fabric, config: &crate::config::Config, ctx: 
 
         // filter and sort entries using functional pipeline matching Elixir logic
         let mut next_entries: Vec<Entry> = fabric
-            .entries_by_height(next_height as u64)?
+            .entries_by_height(next_height)?
             .into_iter()
             .filter_map(|entry_bin| Entry::from_vecpak_bin(&entry_bin).ok())
             .filter(|next_entry| {
@@ -1008,11 +1009,10 @@ pub async fn proc_entries(fabric: &Fabric, config: &crate::config::Config, ctx: 
         debug!("Applied entry {} at height {}", bs58::encode(&entry.hash).into_string(), entry.header.height);
 
         // broadcast attestation if synced and we're a trainer
-        if let Some(attestation_packed) = attestation_packed {
-            if is_quorum_synced_off_by_x(fabric, 6) {
+        if let Some(attestation_packed) = attestation_packed
+            && is_quorum_synced_off_by_x(fabric, 6) {
                 broadcast_attestation(ctx, &attestation_packed, &entry.hash).await;
             }
-        }
 
         // remove transactions from pool (matches Elixir TXPool.delete_packed)
         delete_transactions_from_pool(&entry.txs);
@@ -1030,7 +1030,7 @@ async fn broadcast_attestation(ctx: &crate::Context, attestation_packed: &[u8], 
         return;
     };
 
-    let event_att = EventAttestation { attestations: vec![attestation] };
+    let event_att = EventAttestation::new(vec![attestation]);
 
     if let Ok(peers) = ctx.node_peers.get_all().await {
         for peer in peers {

@@ -15,7 +15,7 @@ pub enum Error {
 
 pub async fn init_storage(base: &str) -> Result<(), Error> {
     // Fast path if already initialized
-    if let Some(_) = ARCHIVER_DIR.get() {
+    if ARCHIVER_DIR.get().is_some() {
         return Ok(());
     }
 

@@ -5,7 +5,7 @@ use crate::node::protocol::{Catchup, CatchupHeight, Instruction, NewPhoneWhoDis,
 use crate::node::{anr, peers};
 use crate::socket::UdpSocketExt;
 use crate::utils::misc::Typename;
-use crate::utils::misc::{format_duration, get_unix_millis_now};
+use crate::utils::misc::format_duration;
 use crate::{SystemStats, Ver, config, consensus, get_system_stats, metrics, node, utils};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -78,9 +78,9 @@ impl Context {
         use tokio::time::{Duration, interval};
 
         assert_ne!(config.get_root(), "");
-        init_storage(&config.get_root()).await?;
+        init_storage(config.get_root()).await?;
 
-        let fabric = Fabric::new(&config.get_root()).await?;
+        let fabric = Fabric::new(config.get_root()).await?;
         let metrics = Metrics::new();
         let node_peers = peers::NodePeers::default();
         let node_anrs = NodeAnrs::new();
@@ -234,7 +234,7 @@ impl Context {
 
         let verified_ips = self.node_anrs.get_random_verified(3).await;
         if !verified_ips.is_empty() {
-            let get_peer_anrs = GetPeerAnrs { has_peers_b3f4: self.node_anrs.get_all_b3f4().await };
+            let get_peer_anrs = GetPeerAnrs::new(self.node_anrs.get_all_b3f4().await);
             for ip in &verified_ips {
                 self.send_message_to(&get_peer_anrs, *ip).await?;
             }
@@ -446,13 +446,11 @@ impl Context {
     }
 
     pub async fn is_peer_handshaked(&self, ip: Ipv4Addr) -> bool {
-        if let Some(peer) = self.node_peers.by_ip(ip).await {
-            if let Some(ref pk) = peer.pk {
-                if self.node_anrs.is_handshaked(pk).await {
+        if let Some(peer) = self.node_peers.by_ip(ip).await
+            && let Some(ref pk) = peer.pk
+                && self.node_anrs.is_handshaked(pk).await {
                     return true;
                 }
-            }
-        }
         false
     }
 
@@ -511,12 +509,12 @@ impl Context {
 
     /// Get temporal height from fabric
     pub fn get_temporal_height(&self) -> u64 {
-        self.fabric.get_temporal_height().ok().flatten().unwrap_or_default() as u64
+        self.fabric.get_temporal_height().ok().flatten().unwrap_or_default()
     }
 
     /// Get rooted height from fabric
     pub fn get_rooted_height(&self) -> u64 {
-        self.fabric.get_rooted_height().ok().flatten().unwrap_or_default() as u64
+        self.fabric.get_rooted_height().ok().flatten().unwrap_or_default()
     }
 
     pub async fn get_entries(&self) -> Vec<(u64, u64, u64)> {
@@ -571,13 +569,12 @@ impl Context {
 
     /// Get ANR by public key (Base58 encoded)
     pub async fn get_anr_by_pk_b58(&self, pk_b58: &str) -> Option<anr::Anr> {
-        if let Ok(pk_bytes) = bs58::decode(pk_b58).into_vec() {
-            if pk_bytes.len() == 48 {
+        if let Ok(pk_bytes) = bs58::decode(pk_b58).into_vec()
+            && pk_bytes.len() == 48 {
                 let mut pk_array = [0u8; 48];
                 pk_array.copy_from_slice(&pk_bytes);
                 return self.get_anr_by_pk(&pk_array).await;
             }
-        }
         None
     }
 
@@ -742,13 +739,12 @@ impl Context {
             }
 
             Instruction::SendGetPeerAnrsReply { dst, anrs } => {
-                let peers_v2 = GetPeerAnrsReply { anrs };
+                let peers_v2 = GetPeerAnrsReply::new(anrs);
                 self.send_message_to(&peers_v2, dst).await?;
             }
 
             Instruction::SendPingReply { ts_m, dst } => {
-                let seen_time_ms = get_unix_millis_now();
-                let pong = PingReply { ts_m: ts_m, seen_time: seen_time_ms };
+                let pong = PingReply::new(ts_m);
                 self.send_message_to(&pong, dst).await?;
             }
 
@@ -1132,7 +1128,7 @@ mod tests {
                 let mut buf = [0u8; 1024];
                 let target: Ipv4Addr = "127.0.0.1".parse().unwrap();
 
-                let pong = PingReply { ts_m: 1234567890, seen_time: 1234567890123 };
+                let pong = PingReply::new(1234567890);
                 // Test send_to convenience function - should return error with MockSocket but not panic
                 match context.send_message_to(&pong, target).await {
                     Ok(_) => {

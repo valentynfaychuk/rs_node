@@ -122,30 +122,26 @@ impl Typename for Instruction {
 /// Primary format is Vecpak; legacy ETF is auto-converted
 #[instrument(skip(bin), name = "Proto::from_vecpak_validated")]
 pub fn parse_vecpak_bin(bin: &[u8]) -> Result<Box<dyn Protocol>, Error> {
-    use amadeus_utils::vecpak::{VecpakExt, decode};
+    use amadeus_utils::vecpak::{VecpakExt, decode, from_slice};
 
-    // decode as vecpak (auto-detects and converts legacy ETF if needed)
     let term = decode(bin).map_err(|e| Error::Vecpak(e.to_string()))?;
-
-    // get PropListMap from the term
     let map = term.get_proplist_map().ok_or(Error::ParseError("map"))?;
-
-    // `op` determines the variant (binary string key in vecpak)
     let op_name = map.get_string(b"op").ok_or(Error::ParseError("op"))?;
+
     let proto: Box<dyn Protocol> = match op_name.as_str() {
-        Ping::TYPENAME => Box::new(Ping::from_vecpak_map_validated(map)?),
-        PingReply::TYPENAME => Box::new(PingReply::from_vecpak_map_validated(map)?),
+        Ping::TYPENAME => Box::new(from_slice::<Ping>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        PingReply::TYPENAME => Box::new(from_slice::<PingReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
         Entry::TYPENAME => Box::new(Entry::from_vecpak_map_validated(map)?),
         EventTip::TYPENAME => Box::new(EventTip::from_vecpak_map_validated(map)?),
-        EventAttestation::TYPENAME => Box::new(EventAttestation::from_vecpak_map_validated(map)?),
+        EventAttestation::TYPENAME => Box::new(from_slice::<EventAttestation>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
         Solution::TYPENAME => Box::new(Solution::from_vecpak_map_validated(map)?),
-        EventTx::TYPENAME => Box::new(EventTx::from_vecpak_map_validated(map)?),
-        GetPeerAnrs::TYPENAME => Box::new(GetPeerAnrs::from_vecpak_map_validated(map)?),
-        GetPeerAnrsReply::TYPENAME => Box::new(GetPeerAnrsReply::from_vecpak_map_validated(map)?),
-        NewPhoneWhoDis::TYPENAME => Box::new(NewPhoneWhoDis::from_vecpak_map_validated(map)?),
-        NewPhoneWhoDisReply::TYPENAME => Box::new(NewPhoneWhoDisReply::from_vecpak_map_validated(map)?),
-        SpecialBusiness::TYPENAME => Box::new(SpecialBusiness::from_vecpak_map_validated(map)?),
-        SpecialBusinessReply::TYPENAME => Box::new(SpecialBusinessReply::from_vecpak_map_validated(map)?),
+        EventTx::TYPENAME => Box::new(from_slice::<EventTx>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        GetPeerAnrs::TYPENAME => Box::new(from_slice::<GetPeerAnrs>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        GetPeerAnrsReply::TYPENAME => Box::new(from_slice::<GetPeerAnrsReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        NewPhoneWhoDis::TYPENAME => Box::new(from_slice::<NewPhoneWhoDis>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        NewPhoneWhoDisReply::TYPENAME => Box::new(from_slice::<NewPhoneWhoDisReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        SpecialBusiness::TYPENAME => Box::new(from_slice::<SpecialBusiness>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
+        SpecialBusinessReply::TYPENAME => Box::new(from_slice::<SpecialBusinessReply>(bin).map_err(|e| Error::Vecpak(e.to_string()))?),
         Catchup::TYPENAME => Box::new(Catchup::from_vecpak_map_validated(map)?),
         CatchupReply::TYPENAME => Box::new(CatchupReply::from_vecpak_map_validated(map)?),
         _ => return Err(Error::ParseError("op")),
@@ -238,13 +234,15 @@ impl EventTip {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Ping {
+    op: String,
     pub ts_m: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct PingReply {
+    op: String,
     pub ts_m: u64,
     pub seen_time: u64,
 }
@@ -318,13 +316,12 @@ impl Protocol for Catchup {
                 if let Some(true) = flag.a {
                     flag_pairs.push((vecpak::Term::Binary(b"a".to_vec()), vecpak::Term::Binary(b"true".to_vec())));
                 }
-                if let Some(ref hashes) = flag.hashes {
-                    if !hashes.is_empty() {
+                if let Some(ref hashes) = flag.hashes
+                    && !hashes.is_empty() {
                         let hashes_terms: Vec<vecpak::Term> =
                             hashes.iter().map(|h| vecpak::Term::Binary(h.clone())).collect();
                         flag_pairs.push((vecpak::Term::Binary(b"hashes".to_vec()), vecpak::Term::List(hashes_terms)));
                     }
-                }
                 vecpak::Term::PropList(flag_pairs)
             })
             .collect();
@@ -470,7 +467,7 @@ impl Protocol for CatchupReply {
 
             if let Some(ref consensuses) = trie.consensuses {
                 for consensus in consensuses {
-                    let _ = ctx.fabric.insert_consensus(&consensus);
+                    let _ = ctx.fabric.insert_consensus(consensus);
                 }
             }
         }
@@ -495,18 +492,12 @@ impl Typename for Ping {
 
 #[async_trait::async_trait]
 impl Protocol for Ping {
-    fn from_vecpak_map_validated(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        let ts_m = map.get_integer(b"ts_m").ok_or(Error::ParseError("ts_m"))?;
-        Ok(Self { ts_m })
+    fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        let pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec())),
-            (vecpak::Term::Binary(b"ts_m".to_vec()), vecpak::Term::VarInt(self.ts_m as i128)),
-        ];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     #[instrument(skip(self, ctx), fields(src = %src), name = "Ping::handle")]
@@ -516,17 +507,21 @@ impl Protocol for Ping {
     }
 }
 
+impl Default for Ping {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Ping {
     pub const TYPENAME: &'static str = "ping";
 
-    /// Create a new Ping with current timestamp (v1.1.7+ simplified format)
     pub fn new() -> Self {
-        Self { ts_m: get_unix_millis_now() }
+        Self { op: Self::TYPENAME.to_string(), ts_m: get_unix_millis_now() }
     }
 
-    /// Create Ping with specific timestamp
     pub fn with_timestamp(ts_m: u64) -> Self {
-        Self { ts_m }
+        Self { op: Self::TYPENAME.to_string(), ts_m }
     }
 }
 
@@ -538,20 +533,12 @@ impl Typename for PingReply {
 
 #[async_trait::async_trait]
 impl Protocol for PingReply {
-    fn from_vecpak_map_validated(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        let ts_m = map.get_integer(b"ts_m").ok_or(Error::ParseError("ts_m"))?;
-        let seen_time_ms = get_unix_millis_now();
-        // check what else must be validated
-        Ok(Self { ts_m: ts_m, seen_time: seen_time_ms })
+    fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        let pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec())),
-            (vecpak::Term::Binary(b"ts_m".to_vec()), vecpak::Term::VarInt(self.ts_m as i128)),
-        ];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     #[instrument(skip(self, ctx), fields(src = %src), name = "PingReply::handle")]
@@ -563,11 +550,46 @@ impl Protocol for PingReply {
 
 impl PingReply {
     pub const TYPENAME: &'static str = "ping_reply";
+
+    pub fn new(ts_m: u64) -> Self {
+        Self { op: Self::TYPENAME.to_string(), ts_m, seen_time: get_unix_millis_now() }
+    }
+
+    #[cfg(test)]
+    pub fn with_times(ts_m: u64, seen_time: u64) -> Self {
+        Self { op: Self::TYPENAME.to_string(), ts_m, seen_time }
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct EventTx {
+    op: String,
+    #[serde(rename = "txs_packed")]
+    #[serde(with = "serde_bytes_vec_vec")]
     pub valid_txs: Vec<Vec<u8>>,
+}
+
+mod serde_bytes_vec_vec {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S>(v: &Vec<Vec<u8>>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = s.serialize_seq(Some(v.len()))?;
+        for bytes in v {
+            seq.serialize_element(&serde_bytes::Bytes::new(bytes))?;
+        }
+        seq.end()
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Vec<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec_of_bytes: Vec<serde_bytes::ByteBuf> = Vec::deserialize(d)?;
+        Ok(vec_of_bytes.into_iter().map(|b| b.into_vec()).collect())
+    }
 }
 
 impl Typename for EventTx {
@@ -578,22 +600,12 @@ impl Typename for EventTx {
 
 #[async_trait::async_trait]
 impl Protocol for EventTx {
-    fn from_vecpak_map_validated(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        // txs_packed is a list of binary transaction packets, not a single binary
-        let txs_list = map.get_list(b"txs_packed").ok_or(Error::ParseError("txs_packed"))?;
-        let valid_txs = EventTx::get_valid_txs_from_list(txs_list)?;
-        Ok(Self { valid_txs })
+    fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        // create list of transaction binaries (txs_packed is directly a list of binaries)
-        let tx_terms: Vec<vecpak::Term> = self.valid_txs.iter().map(|tx| vecpak::Term::Binary(tx.clone())).collect();
-        let pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec())),
-            (vecpak::Term::Binary(b"txs_packed".to_vec()), vecpak::Term::List(tx_terms)),
-        ];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     async fn handle(&self, _ctx: &Context, _src: Ipv4Addr) -> Result<Vec<Instruction>, Error> {
@@ -605,33 +617,52 @@ impl Protocol for EventTx {
 impl EventTx {
     pub const TYPENAME: &'static str = "event_tx";
 
-    fn get_valid_txs_from_list(txs_list: &[amadeus_utils::vecpak::Term]) -> Result<Vec<Vec<u8>>, Error> {
-        use amadeus_utils::vecpak::Term as VTerm;
-
-        let mut good: Vec<Vec<u8>> = Vec::with_capacity(txs_list.len());
-
-        for t in txs_list {
-            // each item must be a binary (a packed transaction)
-            let bin = if let VTerm::Binary(b) = t {
-                b.as_slice()
-            } else {
-                // skip non-binary entries silently
-                continue;
-            };
-
-            // validate basic tx rules, special-meeting context is false in gossip path
-            if crate::consensus::doms::tx::validate(bin, false).is_ok() {
-                good.push(bin.to_vec());
-            }
-        }
-
-        Ok(good)
+    pub fn new(valid_txs: Vec<Vec<u8>>) -> Self {
+        Self { op: Self::TYPENAME.to_string(), valid_txs }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct GetPeerAnrs {
+    op: String,
+    #[serde(rename = "hasPeersb3f4")]
+    #[serde(with = "serde_bytes_array_vec")]
     pub has_peers_b3f4: Vec<[u8; 4]>,
+}
+
+mod serde_bytes_array_vec {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S>(v: &Vec<[u8; 4]>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = s.serialize_seq(Some(v.len()))?;
+        for bytes in v {
+            seq.serialize_element(&serde_bytes::Bytes::new(bytes))?;
+        }
+        seq.end()
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Vec<[u8; 4]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let vec_of_bytes: Vec<serde_bytes::ByteBuf> = Vec::deserialize(d)?;
+        vec_of_bytes
+            .into_iter()
+            .map(|b| {
+                let vec = b.into_vec();
+                if vec.len() == 4 {
+                    let mut arr = [0u8; 4];
+                    arr.copy_from_slice(&vec);
+                    Ok(arr)
+                } else {
+                    Err(serde::de::Error::custom("expected 4 bytes"))
+                }
+            })
+            .collect()
+    }
 }
 
 impl Typename for GetPeerAnrs {
@@ -642,28 +673,12 @@ impl Typename for GetPeerAnrs {
 
 #[async_trait::async_trait]
 impl Protocol for GetPeerAnrs {
-    fn from_vecpak_map_validated(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        let list = map.get_list(b"hasPeersb3f4").ok_or(Error::ParseError("hasPeersb3f4"))?;
-        let mut has_peers_b3f4 = Vec::<[u8; 4]>::new();
-        for t in list {
-            use std::convert::TryInto;
-            let b = t.get_binary().ok_or(Error::ParseError("hasPeersb3f4"))?;
-            let b3f4 = b.try_into().map_err(|_| Error::ParseError("hasPeersb3f4_length"))?;
-            has_peers_b3f4.push(b3f4);
-        }
-
-        Ok(Self { has_peers_b3f4 })
+    fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        let b3f4_terms: Vec<vecpak::Term> =
-            self.has_peers_b3f4.iter().map(|b3f4| vecpak::Term::Binary(b3f4.to_vec())).collect();
-        let pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec())),
-            (vecpak::Term::Binary(b"hasPeersb3f4".to_vec()), vecpak::Term::List(b3f4_terms)),
-        ];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     async fn handle(&self, ctx: &Context, src: Ipv4Addr) -> Result<Vec<Instruction>, Error> {
@@ -675,10 +690,15 @@ impl Protocol for GetPeerAnrs {
 
 impl GetPeerAnrs {
     pub const TYPENAME: &'static str = "get_peer_anrs";
+
+    pub fn new(has_peers_b3f4: Vec<[u8; 4]>) -> Self {
+        Self { op: Self::TYPENAME.to_string(), has_peers_b3f4 }
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct GetPeerAnrsReply {
+    op: String,
     pub anrs: Vec<Anr>,
 }
 
@@ -690,27 +710,12 @@ impl Typename for GetPeerAnrsReply {
 
 #[async_trait::async_trait]
 impl Protocol for GetPeerAnrsReply {
-    fn from_vecpak_map_validated(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        let list = map.get_list(b"anrs").ok_or(Error::ParseError("anrs"))?;
-        let mut anrs = Vec::new();
-        for term in list {
-            let anr_map = term.get_proplist_map().ok_or(Error::ParseError("anr_map"))?;
-            let anr = Anr::from_vecpak_map(anr_map)?;
-            if anr.verify_signature() {
-                anrs.push(anr);
-            }
-        }
-        Ok(Self { anrs })
+    fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        let anr_terms: Vec<vecpak::Term> = self.anrs.iter().map(|anr| anr.to_vecpak_term()).collect();
-        let pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec())),
-            (vecpak::Term::Binary(b"anrs".to_vec()), vecpak::Term::List(anr_terms)),
-        ];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     async fn handle(&self, ctx: &Context, _src: Ipv4Addr) -> Result<Vec<Instruction>, Error> {
@@ -723,10 +728,16 @@ impl Protocol for GetPeerAnrsReply {
 
 impl GetPeerAnrsReply {
     pub const TYPENAME: &'static str = "get_peer_anrs_reply";
+
+    pub fn new(anrs: Vec<Anr>) -> Self {
+        Self { op: Self::TYPENAME.to_string(), anrs }
+    }
 }
 
-#[derive(Debug)]
-pub struct NewPhoneWhoDis {}
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct NewPhoneWhoDis {
+    op: String,
+}
 
 impl Typename for NewPhoneWhoDis {
     fn typename(&self) -> &'static str {
@@ -737,15 +748,11 @@ impl Typename for NewPhoneWhoDis {
 #[async_trait::async_trait]
 impl Protocol for NewPhoneWhoDis {
     fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        // v1.1.7+ simplified - no fields to parse
-        Ok(Self {})
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        let pairs =
-            vec![(vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec()))];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     #[instrument(skip_all)]
@@ -755,17 +762,24 @@ impl Protocol for NewPhoneWhoDis {
     }
 }
 
+impl Default for NewPhoneWhoDis {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NewPhoneWhoDis {
     pub const TYPENAME: &'static str = "new_phone_who_dis";
 
     /// Create new NewPhoneWhoDis message (v1.1.7+ simplified)
     pub fn new() -> Self {
-        Self {}
+        Self { op: Self::TYPENAME.to_string() }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct NewPhoneWhoDisReply {
+    op: String,
     pub anr: Anr,
 }
 
@@ -777,24 +791,12 @@ impl Typename for NewPhoneWhoDisReply {
 
 #[async_trait::async_trait]
 impl Protocol for NewPhoneWhoDisReply {
-    fn from_vecpak_map_validated(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        let anr_map = map.get_proplist_map(b"anr").ok_or(Error::ParseError("anr"))?;
-        let anr = Anr::from_vecpak_map(anr_map)?;
-
-        if !anr.verify_signature() {
-            return Err(Error::ParseError("anr_signature_invalid"));
-        }
-
-        Ok(Self { anr })
+    fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        let pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec())),
-            (vecpak::Term::Binary(b"anr".to_vec()), self.anr.to_vecpak_term()),
-        ];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     #[instrument(skip(self, ctx), fields(src = %src), name = "NewPhoneWhoDisReply::handle")]
@@ -822,12 +824,14 @@ impl NewPhoneWhoDisReply {
     pub const TYPENAME: &'static str = "new_phone_who_dis_reply";
 
     pub fn new(anr: Anr) -> Self {
-        Self { anr }
+        Self { op: Self::TYPENAME.to_string(), anr }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct SpecialBusiness {
+    op: String,
+    #[serde(with = "serde_bytes")]
     pub business: Vec<u8>,
 }
 
@@ -839,18 +843,12 @@ impl Typename for SpecialBusiness {
 
 #[async_trait::async_trait]
 impl Protocol for SpecialBusiness {
-    fn from_vecpak_map_validated(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        let business = map.get_binary::<Vec<u8>>(b"business").ok_or(Error::ParseError("business"))?;
-        Ok(Self { business })
+    fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        let pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec())),
-            (vecpak::Term::Binary(b"business".to_vec()), vecpak::Term::Binary(self.business.clone())),
-        ];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     async fn handle(&self, _ctx: &Context, _src: Ipv4Addr) -> Result<Vec<Instruction>, Error> {
@@ -862,10 +860,16 @@ impl Protocol for SpecialBusiness {
 
 impl SpecialBusiness {
     pub const TYPENAME: &'static str = "special_business";
+
+    pub fn new(business: Vec<u8>) -> Self {
+        Self { op: Self::TYPENAME.to_string(), business }
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct SpecialBusinessReply {
+    op: String,
+    #[serde(with = "serde_bytes")]
     pub business: Vec<u8>,
 }
 
@@ -877,18 +881,12 @@ impl Typename for SpecialBusinessReply {
 
 #[async_trait::async_trait]
 impl Protocol for SpecialBusinessReply {
-    fn from_vecpak_map_validated(map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
-        let business = map.get_binary::<Vec<u8>>(b"business").ok_or(Error::ParseError("business"))?;
-        Ok(Self { business })
+    fn from_vecpak_map_validated(_map: amadeus_utils::vecpak::PropListMap) -> Result<Self, Error> {
+        unreachable!("use from_slice instead")
     }
 
     fn to_vecpak_packet_bin(&self) -> Result<Vec<u8>, Error> {
-        use amadeus_utils::vecpak::encode;
-        let pairs = vec![
-            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(Self::TYPENAME.as_bytes().to_vec())),
-            (vecpak::Term::Binary(b"business".to_vec()), vecpak::Term::Binary(self.business.clone())),
-        ];
-        Ok(encode(vecpak::Term::PropList(pairs)))
+        amadeus_utils::vecpak::to_vec(self).map_err(|e| Error::Vecpak(e.to_string()))
     }
 
     async fn handle(&self, _ctx: &Context, _src: Ipv4Addr) -> Result<Vec<Instruction>, Error> {
@@ -899,6 +897,10 @@ impl Protocol for SpecialBusinessReply {
 
 impl SpecialBusinessReply {
     pub const TYPENAME: &'static str = "special_business_reply";
+
+    pub fn new(business: Vec<u8>) -> Self {
+        Self { op: Self::TYPENAME.to_string(), business }
+    }
 }
 
 #[cfg(test)]
@@ -928,7 +930,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pong_vecpak_roundtrip() {
-        let pong = PingReply { ts_m: 1234567890, seen_time: 9876543210 };
+        let pong = PingReply::with_times(1234567890, 9876543210);
 
         let bin = pong.to_vecpak_packet_bin().expect("should serialize");
         let result = parse_vecpak_bin(&bin).expect("should deserialize");
@@ -939,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_txpool_vecpak_roundtrip() {
-        let event_tx = EventTx { valid_txs: vec![vec![1, 2, 3], vec![4, 5, 6]] };
+        let event_tx = EventTx::new(vec![vec![1, 2, 3], vec![4, 5, 6]]);
 
         let bin = event_tx.to_vecpak_packet_bin().expect("should serialize");
         let result = parse_vecpak_bin(&bin).expect("should deserialize");
@@ -949,7 +951,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_peers_vecpak_roundtrip() {
-        let peers = GetPeerAnrs { has_peers_b3f4: vec![[192, 168, 1, 1], [10, 0, 0, 1]] };
+        let peers = GetPeerAnrs::new(vec![[192, 168, 1, 1], [10, 0, 0, 1]]);
 
         let bin = peers.to_vecpak_packet_bin().expect("should serialize");
         let result = parse_vecpak_bin(&bin).expect("should deserialize");
@@ -1025,7 +1027,7 @@ mod tests {
         let result = parse_vecpak_bin(&valid_bin);
         assert!(result.is_ok(), "Valid ping should parse successfully");
 
-        let ping_reply = PingReply { ts_m: 1234567890, seen_time: 9876543210 };
+        let ping_reply = PingReply::with_times(1234567890, 9876543210);
         let valid_bin = ping_reply.to_vecpak_packet_bin().expect("should serialize");
         let result = parse_vecpak_bin(&valid_bin);
         assert!(result.is_ok(), "Valid ping_reply should parse successfully");
@@ -1077,7 +1079,7 @@ mod tests {
         match Context::with_config_and_socket(config, dummy_socket).await {
             Ok(ctx) => {
                 // Create a Pong message to test with
-                let pong = PingReply { ts_m: 12345, seen_time: 67890 };
+                let pong = PingReply::with_times(12345, 67890);
 
                 // Check metrics before sending
                 let metrics_json_before = ctx.metrics.get_json();
@@ -1223,7 +1225,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ping_reply_roundtrip_via_vecpak() {
-        let original = PingReply { ts_m: 1234567890123, seen_time: 0 };
+        let original = PingReply::with_times(1234567890123, 0);
         let version = Ver::new(1, 2, 3);
         let payload = original.to_bin(version).expect("should encode");
 
@@ -1260,7 +1262,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_peer_anrs_roundtrip_via_vecpak() {
-        let original = GetPeerAnrs { has_peers_b3f4: vec![[1, 2, 3, 4], [5, 6, 7, 8]] };
+        let original = GetPeerAnrs::new(vec![[1, 2, 3, 4], [5, 6, 7, 8]]);
         let version = Ver::new(1, 2, 3);
         let payload = original.to_bin(version).expect("should encode");
 
@@ -1276,7 +1278,7 @@ mod tests {
         // create simple test transaction
         let tx1 = vec![1u8, 2, 3, 4, 5];
         let tx2 = vec![6u8, 7, 8, 9, 10];
-        let original = EventTx { valid_txs: vec![tx1, tx2] };
+        let original = EventTx::new(vec![tx1, tx2]);
         let version = Ver::new(1, 2, 3);
         let payload = original.to_bin(version).expect("should encode");
 
@@ -1298,5 +1300,172 @@ mod tests {
         let version = Ver::new(1, 2, 3);
         let re_encoded = parsed.to_bin(version).expect("should re-encode");
         assert_eq!(packet, re_encoded, "re-encoded must match original from Elixir");
+    }
+
+    #[tokio::test]
+    async fn test_honest_roundtrip_ping() {
+        let ts_m_value = 1234567890u64;
+
+        let manual_pairs = vec![
+            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"ping".to_vec())),
+            (vecpak::Term::Binary(b"ts_m".to_vec()), vecpak::Term::VarInt(ts_m_value as i128)),
+        ];
+        let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
+
+        let decoded_struct = amadeus_utils::vecpak::from_slice::<Ping>(&manual_encoded).expect("decode to struct");
+        assert_eq!(decoded_struct.ts_m, ts_m_value);
+
+        let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");
+
+        assert_eq!(serde_encoded, manual_encoded, "encoded bytes should match exactly");
+
+        let re_decoded = amadeus_utils::vecpak::from_slice::<Ping>(&serde_encoded).expect("re-decode");
+        assert_eq!(re_decoded.ts_m, ts_m_value);
+    }
+
+    #[tokio::test]
+    async fn test_honest_roundtrip_ping_reply() {
+        let ts_m_value = 1234567890u64;
+        let seen_time_value = 9876543210u64;
+
+        let manual_pairs = vec![
+            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"ping_reply".to_vec())),
+            (vecpak::Term::Binary(b"seen_time".to_vec()), vecpak::Term::VarInt(seen_time_value as i128)),
+            (vecpak::Term::Binary(b"ts_m".to_vec()), vecpak::Term::VarInt(ts_m_value as i128)),
+        ];
+        let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
+
+        let decoded_struct = amadeus_utils::vecpak::from_slice::<PingReply>(&manual_encoded).expect("decode to struct");
+        assert_eq!(decoded_struct.ts_m, ts_m_value);
+        assert_eq!(decoded_struct.seen_time, seen_time_value);
+
+        let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");
+
+        assert_eq!(serde_encoded, manual_encoded, "encoded bytes should match exactly");
+
+        let re_decoded = amadeus_utils::vecpak::from_slice::<PingReply>(&serde_encoded).expect("re-decode");
+        assert_eq!(re_decoded.ts_m, ts_m_value);
+        assert_eq!(re_decoded.seen_time, seen_time_value);
+    }
+
+    #[tokio::test]
+    async fn test_honest_roundtrip_event_tx() {
+        let tx1 = vec![1u8, 2, 3, 4, 5];
+        let tx2 = vec![6u8, 7, 8, 9, 10];
+
+        let tx_terms: Vec<vecpak::Term> = vec![
+            vecpak::Term::Binary(tx1.clone()),
+            vecpak::Term::Binary(tx2.clone()),
+        ];
+        let manual_pairs = vec![
+            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"event_tx".to_vec())),
+            (vecpak::Term::Binary(b"txs_packed".to_vec()), vecpak::Term::List(tx_terms)),
+        ];
+        let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
+
+        let decoded_struct = amadeus_utils::vecpak::from_slice::<EventTx>(&manual_encoded).expect("decode to struct");
+        assert_eq!(decoded_struct.valid_txs, vec![tx1.clone(), tx2.clone()]);
+
+        let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");
+
+        assert_eq!(serde_encoded, manual_encoded, "encoded bytes should match exactly");
+
+        let re_decoded = amadeus_utils::vecpak::from_slice::<EventTx>(&serde_encoded).expect("re-decode");
+        assert_eq!(re_decoded.valid_txs, vec![tx1, tx2]);
+    }
+
+    #[tokio::test]
+    async fn test_honest_roundtrip_get_peer_anrs() {
+        let peer1 = [192u8, 168, 1, 1];
+        let peer2 = [10u8, 0, 0, 1];
+
+        let has_peers_terms: Vec<vecpak::Term> = vec![
+            vecpak::Term::Binary(peer1.to_vec()),
+            vecpak::Term::Binary(peer2.to_vec()),
+        ];
+        let manual_pairs = vec![
+            (vecpak::Term::Binary(b"hasPeersb3f4".to_vec()), vecpak::Term::List(has_peers_terms)),
+            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"get_peer_anrs".to_vec())),
+        ];
+        let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
+
+        let decoded_struct = amadeus_utils::vecpak::from_slice::<GetPeerAnrs>(&manual_encoded).expect("decode to struct");
+        assert_eq!(decoded_struct.has_peers_b3f4, vec![peer1, peer2]);
+
+        let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");
+
+        assert_eq!(serde_encoded, manual_encoded, "encoded bytes should match exactly");
+
+        let re_decoded = amadeus_utils::vecpak::from_slice::<GetPeerAnrs>(&serde_encoded).expect("re-decode");
+        assert_eq!(re_decoded.has_peers_b3f4, vec![peer1, peer2]);
+    }
+
+    #[tokio::test]
+    async fn test_honest_roundtrip_new_phone_who_dis() {
+        let manual_pairs = vec![
+            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"new_phone_who_dis".to_vec())),
+        ];
+        let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
+
+        let decoded_struct = amadeus_utils::vecpak::from_slice::<NewPhoneWhoDis>(&manual_encoded).expect("decode to struct");
+
+        let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");
+
+        assert_eq!(serde_encoded, manual_encoded, "encoded bytes should match exactly");
+
+        let _re_decoded = amadeus_utils::vecpak::from_slice::<NewPhoneWhoDis>(&serde_encoded).expect("re-decode");
+    }
+
+    #[tokio::test]
+    async fn test_honest_roundtrip_special_business() {
+        let business_data = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
+
+        let manual_pairs = vec![
+            (vecpak::Term::Binary(b"business".to_vec()), vecpak::Term::Binary(business_data.clone())),
+            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"special_business".to_vec())),
+        ];
+        let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_pairs));
+
+        let decoded_struct = amadeus_utils::vecpak::from_slice::<SpecialBusiness>(&manual_encoded).expect("decode to struct");
+        assert_eq!(decoded_struct.business, business_data.clone());
+
+        let serde_encoded = amadeus_utils::vecpak::to_vec(&decoded_struct).expect("encode from struct");
+
+        assert_eq!(serde_encoded, manual_encoded, "encoded bytes should match exactly");
+
+        let re_decoded = amadeus_utils::vecpak::from_slice::<SpecialBusiness>(&serde_encoded).expect("re-decode");
+        assert_eq!(re_decoded.business, business_data);
+    }
+
+    #[tokio::test]
+    async fn test_manual_encoded_can_be_parsed_by_parse_vecpak_bin() {
+        let manual_ping_pairs = vec![
+            (vecpak::Term::Binary(b"op".to_vec()), vecpak::Term::Binary(b"ping".to_vec())),
+            (vecpak::Term::Binary(b"ts_m".to_vec()), vecpak::Term::VarInt(1234567890)),
+        ];
+        let manual_encoded = amadeus_utils::vecpak::encode(vecpak::Term::PropList(manual_ping_pairs));
+
+        let parsed = parse_vecpak_bin(&manual_encoded).expect("should parse manual encoding");
+        assert_eq!(parsed.typename(), "ping");
+    }
+
+    #[tokio::test]
+    async fn test_term_roundtrip_all_types() {
+        let test_cases = vec![
+            ("ping", Ping::with_timestamp(999999).to_vecpak_packet_bin().unwrap()),
+            ("ping_reply", PingReply::with_times(111111, 222222).to_vecpak_packet_bin().unwrap()),
+            ("event_tx", EventTx::new(vec![vec![1, 2], vec![3, 4]]).to_vecpak_packet_bin().unwrap()),
+            ("get_peer_anrs", GetPeerAnrs::new(vec![[1, 2, 3, 4]]).to_vecpak_packet_bin().unwrap()),
+            ("new_phone_who_dis", NewPhoneWhoDis::new().to_vecpak_packet_bin().unwrap()),
+            ("special_business", SpecialBusiness::new(vec![1, 2, 3]).to_vecpak_packet_bin().unwrap()),
+        ];
+
+        for (typename, encoded) in test_cases {
+            let decoded = parse_vecpak_bin(&encoded).expect(&format!("should decode {}", typename));
+            assert_eq!(decoded.typename(), typename, "typename should match");
+
+            let re_encoded = decoded.to_vecpak_packet_bin().expect(&format!("should re-encode {}", typename));
+            assert_eq!(encoded, re_encoded, "{} roundtrip should preserve bytes", typename);
+        }
     }
 }

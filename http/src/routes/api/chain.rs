@@ -155,13 +155,12 @@ pub async fn get_transaction_by_id(
     // Get the entry and find the matching transaction
     if let Some(entry) = ctx.get_entry_by_hash(&entry_hash) {
         for tx_bytes in &entry.txs {
-            if let Ok(txu) = TxU::from_vanilla(tx_bytes) {
-                if txu.hash == tx_hash {
+            if let Ok(txu) = TxU::from_vanilla(tx_bytes)
+                && txu.hash == tx_hash {
                     let mut transaction = Transaction::from(&txu);
                     transaction.hash = tx_id; // Keep original input hash string
                     return Json(TransactionResponse::ok(Some(transaction)));
                 }
-            }
         }
     }
 
@@ -218,12 +217,11 @@ pub async fn get_transaction_events_by_account(
                 // Get entry and find the matching transaction
                 if let Some(entry) = ctx.get_entry_by_hash(&entry_hash_arr) {
                     for tx_bytes in &entry.txs {
-                        if let Ok(txu) = TxU::from_vanilla(tx_bytes) {
-                            if txu.hash == tx_hash_arr {
+                        if let Ok(txu) = TxU::from_vanilla(tx_bytes)
+                            && txu.hash == tx_hash_arr {
                                 transactions.push(Transaction::from(&txu));
                                 break;
                             }
-                        }
                     }
                 }
             }

@@ -44,7 +44,7 @@ pub fn verify(
     diff_bits: u64,
 ) -> Result<bool> {
     let usol = unpack(sol);
-    if segment_vr_hash != &usol.segment_vr_hash {
+    if segment_vr_hash != usol.segment_vr_hash {
         return Err("segment_vr_hash");
     }
     if sol.len() != SOL_SIZE {

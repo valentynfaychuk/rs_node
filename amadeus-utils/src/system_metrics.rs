@@ -50,8 +50,8 @@ mod inner {
                 loop {
                     interval.tick().await;
 
-                    if let Ok(current_pid) = sysinfo::get_current_pid() {
-                        if let Ok(mut system) = SYSTEM_MONITOR.lock() {
+                    if let Ok(current_pid) = sysinfo::get_current_pid()
+                        && let Ok(mut system) = SYSTEM_MONITOR.lock() {
                             system.refresh_processes(ProcessesToUpdate::Some(&[current_pid]), true);
                             system.refresh_memory(); // Refresh system memory info
 
@@ -68,7 +68,6 @@ mod inner {
                             let total_memory = system.total_memory();
                             CACHED_TOTAL_MEMORY.store(total_memory, Ordering::Relaxed);
                         }
-                    }
                 }
             });
         });

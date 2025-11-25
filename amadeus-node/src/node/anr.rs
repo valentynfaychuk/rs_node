@@ -300,48 +300,38 @@ impl Anr {
     }
 
     pub fn to_vecpak_for_signing(&self) -> Vec<u8> {
-        // convert ANR to vecpak format for signing (matching Elixir's RDB.vecpak_encode)
-        use amadeus_utils::vecpak::encode;
-        let term = self.to_vecpak_term_without_signature();
-        encode(term)
+        let mut fields = vec![
+            (vecpak::Term::Binary(b"ip4".to_vec()), vecpak::Term::Binary(self.ip4.to_string().into_bytes())),
+            (vecpak::Term::Binary(b"pk".to_vec()), vecpak::Term::Binary(self.pk.to_vec())),
+            (vecpak::Term::Binary(b"pop".to_vec()), vecpak::Term::Binary(self.pop.to_vec())),
+            (vecpak::Term::Binary(b"port".to_vec()), vecpak::Term::VarInt(self.port as i128)),
+            (vecpak::Term::Binary(b"signature".to_vec()), vecpak::Term::Binary(vec![])),
+            (vecpak::Term::Binary(b"ts".to_vec()), vecpak::Term::VarInt(self.ts as i128)),
+            (vecpak::Term::Binary(b"version".to_vec()), vecpak::Term::Binary(self.version.to_string().into_bytes())),
+        ];
+        if let Some(name) = &self.anr_name {
+            fields.push((vecpak::Term::Binary(b"anr_name".to_vec()), vecpak::Term::Binary(name.as_bytes().to_vec())));
+        } else {
+            fields.push((vecpak::Term::Binary(b"anr_name".to_vec()), vecpak::Term::Nil()));
+        }
+        if let Some(desc) = &self.anr_desc {
+            fields.push((vecpak::Term::Binary(b"anr_desc".to_vec()), vecpak::Term::Binary(desc.as_bytes().to_vec())));
+        } else {
+            fields.push((vecpak::Term::Binary(b"anr_desc".to_vec()), vecpak::Term::Nil()));
+        }
+        // Sort fields alphabetically by key to match Elixir's map key ordering
+        fields.sort_by(|a, b| {
+            let key_a: &[u8] = if let vecpak::Term::Binary(bytes) = &a.0 { bytes } else { &[] };
+            let key_b: &[u8] = if let vecpak::Term::Binary(bytes) = &b.0 { bytes } else { &[] };
+            key_a.cmp(key_b)
+        });
+        let term = vecpak::Term::PropList(fields);
+        vecpak::encode(term)
     }
 
     pub fn to_vecpak_term(&self) -> vecpak::Term {
-        let mut pairs = self.to_vecpak_term_without_signature();
-        if let vecpak::Term::PropList(ref mut p) = pairs {
-            p.push((vecpak::Term::Binary(b"signature".to_vec()), vecpak::Term::Binary(self.signature.clone())));
-        }
-        pairs
-    }
-
-    fn to_vecpak_term_without_signature(&self) -> vecpak::Term {
-        let mut pairs = Vec::new();
-
-        // NOTE: anr_desc and anr_name are only included if they have a value.
-        // if they're None, the field is NOT added to the map. this matches
-        // elixir behavior where nil fields are not added during signing.
-        if let Some(desc) = &self.anr_desc {
-            pairs.push((vecpak::Term::Binary(b"anr_desc".to_vec()), vecpak::Term::Binary(desc.as_bytes().to_vec())));
-        }
-
-        if let Some(name) = &self.anr_name {
-            pairs.push((vecpak::Term::Binary(b"anr_name".to_vec()), vecpak::Term::Binary(name.as_bytes().to_vec())));
-        }
-
-        pairs.push((
-            vecpak::Term::Binary(b"ip4".to_vec()),
-            vecpak::Term::Binary(self.ip4.to_string().as_bytes().to_vec()),
-        ));
-        pairs.push((vecpak::Term::Binary(b"pk".to_vec()), vecpak::Term::Binary(self.pk.to_vec())));
-        pairs.push((vecpak::Term::Binary(b"pop".to_vec()), vecpak::Term::Binary(self.pop.clone())));
-        pairs.push((vecpak::Term::Binary(b"port".to_vec()), vecpak::Term::VarInt(self.port as i128)));
-        pairs.push((vecpak::Term::Binary(b"ts".to_vec()), vecpak::Term::VarInt(self.ts as i128)));
-        pairs.push((
-            vecpak::Term::Binary(b"version".to_vec()),
-            vecpak::Term::Binary(self.version.to_string().as_bytes().to_vec()),
-        ));
-
-        vecpak::Term::PropList(pairs)
+        amadeus_utils::vecpak::decode(&amadeus_utils::vecpak::to_vec(self).expect("ANR serialization should not fail"))
+            .expect("ANR deserialization should not fail")
     }
 
     // unpack anr with port validation like elixir
@@ -381,12 +371,12 @@ impl Anr {
     pub fn pack(&self) -> Anr {
         Anr {
             ip4: self.ip4,
-            pk: self.pk.clone(),
+            pk: self.pk,
             pop: self.pop.clone(),
             port: self.port,
             signature: self.signature.clone(),
             ts: self.ts,
-            version: self.version.clone(),
+            version: self.version,
             anr_name: self.anr_name.clone(),
             anr_desc: self.anr_desc.clone(),
             handshaked: false,
@@ -409,6 +399,12 @@ pub struct NodeAnrs {
     store: Arc<RwLock<HashMap<[u8; 48], Anr>>>,
 }
 
+impl Default for NodeAnrs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeAnrs {
     /// Create a new NodeRegistry instance
     pub fn new() -> Self {
@@ -426,11 +422,11 @@ impl NodeAnrs {
         // let hasChainPop = consensus::chain_pop(&anr.pk).is_some();
         anr.hasChainPop = false; // placeholder
 
-        let pk = anr.pk.clone();
+        let pk = anr.pk;
 
         // check if anr already exists and update accordingly
         let mut map = self.store.write().await;
-        map.entry(pk.clone())
+        map.entry(pk)
             .and_modify(|old| {
                 // only update if newer timestamp
                 if anr.ts > old.ts {
@@ -498,13 +494,12 @@ impl NodeAnrs {
     /// Check if protocol message is within rate limit for this peer
     pub async fn is_within_proto_limit(&self, pk: &[u8], typename: &str) -> Option<bool> {
         let mut map = self.store.write().await;
-        if let Some(anr) = map.get_mut(pk) {
-            if let Some(limit) = PROTO_RATE_LIMITS.get(typename) {
+        if let Some(anr) = map.get_mut(pk)
+            && let Some(limit) = PROTO_RATE_LIMITS.get(typename) {
                 let counter = anr.proto_reqs.entry(typename.to_string()).or_insert(0);
                 *counter += 1;
                 return Some(*counter < *limit);
             }
-        }
         None
     }
 
@@ -544,7 +539,7 @@ impl NodeAnrs {
         let mut pks = Vec::new();
         for (k, v) in map.iter() {
             if v.handshaked {
-                pks.push(k.clone());
+                pks.push(*k);
             }
         }
         pks

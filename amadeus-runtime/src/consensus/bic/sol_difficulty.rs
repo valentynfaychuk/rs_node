@@ -17,7 +17,7 @@ fn clamp_bits(b: u32) -> u32 {
 }
 
 fn ceil_div(a: u64, b: u64) -> u64 {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
 
 fn ilog2_floor(n: u64) -> u32 {

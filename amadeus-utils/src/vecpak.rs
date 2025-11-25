@@ -1,6 +1,6 @@
 //! Vecpak term utilities similar to eetf TermExt
 
-pub use ::vecpak::{Term, decode, encode, encode_term};
+pub use ::vecpak::{Term, decode, encode, encode_term, to_vec, from_slice};
 
 use std::collections::HashMap;
 use tracing::warn;

@@ -40,11 +40,11 @@ impl<K: Eq + Hash + Clone, V: Clone> ConcurrentMap<K, V> {
     }
     async fn insert(&self, key: K, value: V) -> Result<(), ()> {
         let mut map = self.inner.write().await;
-        if map.contains_key(&key) {
-            Err(())
-        } else {
-            map.insert(key, value);
+        if let std::collections::hash_map::Entry::Vacant(e) = map.entry(key) {
+            e.insert(value);
             Ok(())
+        } else {
+            Err(())
         }
     }
     async fn remove(&self, key: &K) -> Option<V> {
@@ -68,7 +68,7 @@ impl<K: Eq + Hash + Clone, V: Clone> ConcurrentMap<K, V> {
     }
     async fn update<R>(&self, key: &K, mut f: impl FnMut(&K, &mut V) -> R) -> Option<R> {
         let mut map = self.inner.write().await;
-        if let Some(v) = map.get_mut(key) { Some(f(key, v)) } else { None }
+        map.get_mut(key).map(|v| f(key, v))
     }
 }
 
@@ -386,11 +386,10 @@ impl NodePeers {
         let mut found_secret = None;
         self.peers
             .scan(|_, peer| {
-                if let Some(ref peer_pk) = peer.pk {
-                    if peer_pk == pk {
+                if let Some(ref peer_pk) = peer.pk
+                    && peer_pk == pk {
                         found_secret = peer.shared_secret.clone();
                     }
-                }
             })
             .await;
 
@@ -429,11 +428,10 @@ impl NodePeers {
 
         self.peers
             .scan(|_, peer| {
-                if let Some(ref pk) = peer.pk {
-                    if trainers_set.contains(pk) {
+                if let Some(ref pk) = peer.pk
+                    && trainers_set.contains(pk) {
                         peers.push(peer.clone());
                     }
-                }
             })
             .await;
 
@@ -553,8 +551,8 @@ impl NodePeers {
                 peer.last_seen_ms = current_time_ms;
                 peer.last_msg = current_time_ms;
                 peer.last_msg_type = Some(tip.typename().to_string());
-                peer.temporal = Some(temporal.clone());
-                peer.rooted = Some(rooted.clone());
+                peer.temporal = Some(temporal);
+                peer.rooted = Some(rooted);
             })
             .await
             .is_some();
@@ -813,7 +811,7 @@ impl NodePeers {
             .get_online()
             .await?
             .into_iter()
-            .filter(|peer| peer.pk.as_ref().map_or(false, |pk| trainer_pks.contains(pk)))
+            .filter(|peer| peer.pk.as_ref().is_some_and(|pk| trainer_pks.contains(pk)))
             .collect();
         Ok(online_trainers)
     }
@@ -834,7 +832,7 @@ impl NodePeers {
             match peer.handshake_status {
                 HandshakeStatus::Completed => {
                     online += 1;
-                    if peer.pk.as_ref().map_or(false, |pk| trainer_pks.contains(pk)) {
+                    if peer.pk.as_ref().is_some_and(|pk| trainer_pks.contains(pk)) {
                         trainers += 1;
                     }
                 }

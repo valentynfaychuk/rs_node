@@ -42,7 +42,7 @@ impl TxPool {
         match validate(tx_packed, false) {
             Ok(txu) => {
                 let mut pool = self.pool.write().await;
-                let key = vec![txu.tx.nonce.to_le_bytes().to_vec(), txu.hash.to_vec()].concat();
+                let key = [txu.tx.nonce.to_le_bytes().to_vec(), txu.hash.to_vec()].concat();
                 pool.insert(key, txu);
                 Ok(())
             }
@@ -85,8 +85,8 @@ impl TxPool {
             crate::consensus::fabric::chain_queries::chain_balance(self.db.as_ref(), &txu.tx.signer)
         });
 
-        let exec_cost = txu.exec_cost(args.epoch) as i128;
-        let fee = coin::to_cents(1) as i128;
+        let exec_cost = txu.exec_cost(args.epoch);
+        let fee = coin::to_cents(1);
 
         let new_balance = balance.saturating_sub(exec_cost).saturating_sub(fee);
         if balance < exec_cost.saturating_add(fee) {
@@ -207,7 +207,7 @@ impl TxPool {
             // try to unpack and validate to get the TxU structure
             if let Ok(txu) = validate(tx_packed, false) {
                 // construct the key used for storage (nonce || hash)
-                let key = vec![txu.tx.nonce.to_le_bytes().to_vec(), txu.hash.to_vec()].concat();
+                let key = [txu.tx.nonce.to_le_bytes().to_vec(), txu.hash.to_vec()].concat();
                 if pool.remove(&key).is_some() {
                     removed_count += 1;
                 }

@@ -133,6 +133,12 @@ pub struct Metrics {
     start_time: u32,
 }
 
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Metrics {
     pub fn new() -> Self {
         let handled_protos = SccHashIndex::new();

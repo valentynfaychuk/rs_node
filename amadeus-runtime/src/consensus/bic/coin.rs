@@ -98,19 +98,19 @@ pub fn call_transfer(env: &mut ApplyEnv, args: Vec<Vec<u8>>) -> Result<()> {
     }
     let receiver = args[0].as_slice();
     let amount = args[1].as_slice();
-    let amount = std::str::from_utf8(&amount).ok().and_then(|s| s.parse::<i128>().ok()).ok_or("invalid_amount")?;
+    let amount = std::str::from_utf8(amount).ok().and_then(|s| s.parse::<i128>().ok()).ok_or("invalid_amount")?;
     let symbol = args[2].as_slice();
 
     if receiver.len() != 48 {
         return Err("invalid_receiver_pk");
     }
-    if !(amadeus_utils::bls12_381::validate_public_key(receiver).is_ok() || receiver == &BURN_ADDRESS) {
+    if !(amadeus_utils::bls12_381::validate_public_key(receiver).is_ok() || receiver == BURN_ADDRESS) {
         return Err("invalid_receiver_pk");
     }
     if amount <= 0 {
         return Err("invalid_amount");
     }
-    if amount > balance(env, env.caller_env.account_caller.as_slice(), &symbol)? {
+    if amount > balance(env, env.caller_env.account_caller.as_slice(), symbol)? {
         return Err("insufficient_funds");
     }
 
@@ -136,14 +136,14 @@ pub fn call_create_and_mint(env: &mut ApplyEnv, args: Vec<Vec<u8>>) -> Result<()
     if symbol_original != symbol.as_slice() {
         return Err("invalid_symbol");
     }
-    if symbol.len() < 1 {
+    if symbol.is_empty() {
         return Err("symbol_too_short");
     }
     if symbol.len() > 32 {
         return Err("symbol_too_long");
     }
 
-    let amount = std::str::from_utf8(&amount).ok().and_then(|s| s.parse::<i128>().ok()).ok_or("invalid_amount")?;
+    let amount = std::str::from_utf8(amount).ok().and_then(|s| s.parse::<i128>().ok()).ok_or("invalid_amount")?;
     if amount <= 0 {
         return Err("invalid_amount");
     }
@@ -179,21 +179,21 @@ pub fn call_mint(env: &mut ApplyEnv, args: Vec<Vec<u8>>) -> Result<()> {
     let symbol = args[0].as_slice();
     let amount = args[1].as_slice();
 
-    let amount = std::str::from_utf8(&amount).ok().and_then(|s| s.parse::<i128>().ok()).ok_or("invalid_amount")?;
+    let amount = std::str::from_utf8(amount).ok().and_then(|s| s.parse::<i128>().ok()).ok_or("invalid_amount")?;
     if amount <= 0 {
         return Err("invalid_amount");
     }
 
-    if !exists(env, &symbol)? {
+    if !exists(env, symbol)? {
         return Err("symbol_doesnt_exist");
     }
-    if !has_permission(env, &symbol, env.caller_env.account_caller.as_slice())? {
+    if !has_permission(env, symbol, env.caller_env.account_caller.as_slice())? {
         return Err("no_permissions");
     }
-    if !mintable(env, &symbol)? {
+    if !mintable(env, symbol)? {
         return Err("not_mintable");
     }
-    if paused(env, &symbol)? {
+    if paused(env, symbol)? {
         return Err("paused");
     }
 
@@ -213,17 +213,17 @@ pub fn call_pause(env: &mut ApplyEnv, args: Vec<Vec<u8>>) -> Result<()> {
         return Err("invalid_direction");
     }
 
-    if !exists(env, &symbol)? {
+    if !exists(env, symbol)? {
         return Err("symbol_doesnt_exist");
     }
-    if !has_permission(env, &symbol, env.caller_env.account_caller.as_slice())? {
+    if !has_permission(env, symbol, env.caller_env.account_caller.as_slice())? {
         return Err("no_permissions");
     }
-    if !pausable(env, &symbol)? {
+    if !pausable(env, symbol)? {
         return Err("not_pausable");
     }
 
-    kv_put(env, &bcat(&[b"bic:coin:paused:", &symbol]), &direction)?;
+    kv_put(env, &bcat(&[b"bic:coin:paused:", symbol]), direction)?;
     Ok(())
 }
 

@@ -262,15 +262,15 @@ impl RocksDb {
 
     pub fn get(&self, cf: &str, key: &[u8]) -> Result<Option<Vec<u8>>, RocksDbError> {
         let cf_h = self.inner.cf_handle(cf).unwrap();
-        Ok(self.inner.get_cf(&cf_h, key)?)
+        self.inner.get_cf(&cf_h, key)
     }
     pub fn put(&self, cf: &str, key: &[u8], value: &[u8]) -> Result<(), RocksDbError> {
         let cf_h = self.inner.cf_handle(cf).unwrap();
-        Ok(self.inner.put_cf(&cf_h, key, value)?)
+        self.inner.put_cf(&cf_h, key, value)
     }
     pub fn delete(&self, cf: &str, key: &[u8]) -> Result<(), RocksDbError> {
         let cf_h = self.inner.cf_handle(cf).unwrap();
-        Ok(self.inner.delete_cf(&cf_h, key)?)
+        self.inner.delete_cf(&cf_h, key)
     }
     pub fn iter_prefix(&self, cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, RocksDbError> {
         let cf_h = self.inner.cf_handle(cf).unwrap();
@@ -535,7 +535,7 @@ pub mod snapshot {
             shift += 7;
             if shift >= 64 {
                 return Err(Error::TokioIo(
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, "varint too large").into(),
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "varint too large"),
                 ));
             }
         }
@@ -563,8 +563,7 @@ pub mod snapshot {
     pub async fn export_spk(db: &super::RocksDb, cf_name: &str, output_path: &Path) -> Result<Manifest, Error> {
         let cf_handle = db.inner.cf_handle(cf_name).ok_or_else(|| {
             Error::TokioIo(
-                std::io::Error::new(std::io::ErrorKind::NotFound, format!("column family '{}' not found", cf_name))
-                    .into(),
+                std::io::Error::new(std::io::ErrorKind::NotFound, format!("column family '{}' not found", cf_name)),
             )
         })?;
 
@@ -647,8 +646,7 @@ pub mod snapshot {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!("manifest cf '{}' != requested cf '{}'", manifest.cf, cf_name),
-                )
-                .into(),
+                ),
             ));
         }
 
@@ -658,9 +656,9 @@ pub mod snapshot {
         // Verify magic header
         let mut magic_buf = [0u8; 4];
         reader.read_exact(&mut magic_buf).await.map_err(Error::TokioIo)?;
-        if &magic_buf != MAGIC {
+        if magic_buf != MAGIC {
             return Err(Error::TokioIo(
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid magic header").into(),
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid magic header"),
             ));
         }
 
@@ -708,14 +706,14 @@ pub mod snapshot {
             reader.read_exact(&mut value).await.map_err(Error::TokioIo)?;
 
             tx.send((key, value)).await.map_err(|_| {
-                Error::TokioIo(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "channel closed").into())
+                Error::TokioIo(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "channel closed"))
             })?;
 
             records_read += 1;
         }
 
         drop(tx); // Close channel
-        write_task.await.map_err(|e| Error::TokioIo(std::io::Error::new(std::io::ErrorKind::Other, e).into()))??;
+        write_task.await.map_err(|e| Error::TokioIo(std::io::Error::other(e)))??;
 
         Ok(())
     }
@@ -743,7 +741,7 @@ pub mod snapshot {
 
         let cf_handle = db.inner.cf_handle(cf_name).ok_or_else(|| {
             Error::TokioIo(
-                std::io::Error::new(std::io::ErrorKind::NotFound, format!("cf '{}' missing", cf_name)).into(),
+                std::io::Error::new(std::io::ErrorKind::NotFound, format!("cf '{}' missing", cf_name)),
             )
         })?;
 

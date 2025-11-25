@@ -412,7 +412,7 @@ pub fn call_submit_sol(env: &mut ApplyEnv, args: Vec<Vec<u8>>) -> Result<(), &'s
     let diff_bits_int =
         std::str::from_utf8(&diff_bits).ok().and_then(|s| s.parse::<u64>().ok()).ok_or("invalid_diff_bits")?;
 
-    let hash_bytes: [u8; 32] = hash.into();
+    let hash_bytes: [u8; 32] = hash;
     if !consensus::bic::sol::verify(&sol, &hash_bytes[..], &segment_vr_hash, &env.caller_env.entry_vr_b3, diff_bits_int)
         .unwrap_or(false)
     {
@@ -458,12 +458,12 @@ pub fn call_slash_trainer(env: &mut ApplyEnv, args: Vec<Vec<u8>>) -> Result<(), 
         return Err("invalid_args");
     }
     let epoch = args[0].as_slice();
-    let epoch = std::str::from_utf8(&epoch).ok().and_then(|s| s.parse::<u64>().ok()).ok_or("invalid_epoch")?;
+    let epoch = std::str::from_utf8(epoch).ok().and_then(|s| s.parse::<u64>().ok()).ok_or("invalid_epoch")?;
     let malicious_pk = args[1].as_slice();
     let signature = args[2].as_slice();
     let mask_size = args[3].as_slice();
     let mask_size =
-        std::str::from_utf8(&mask_size).ok().and_then(|s| s.parse::<u64>().ok()).ok_or("invalid_mask_size")?;
+        std::str::from_utf8(mask_size).ok().and_then(|s| s.parse::<u64>().ok()).ok_or("invalid_mask_size")?;
     let mask = args[4].to_vec();
 
     if epoch != env.caller_env.entry_epoch {
@@ -528,7 +528,7 @@ pub fn call_slash_trainer(env: &mut ApplyEnv, args: Vec<Vec<u8>>) -> Result<(), 
 pub fn next(env: &mut ApplyEnv) {
     let epoch_cur = env.caller_env.entry_epoch;
 
-    if epoch_cur >= 295 && epoch_cur < 420 {
+    if (295..420).contains(&epoch_cur) {
         next_420(env);
     } else {
         next_pre_420(env);
@@ -541,7 +541,7 @@ fn next_420(env: &mut ApplyEnv) {
 
     let leaders = get_sorted_leaders_excluding_removed(env, epoch_cur);
 
-    let trainers_key = bcat(&[b"bic:epoch:trainers:", &epoch_cur.to_string().as_bytes()]);
+    let trainers_key = bcat(&[b"bic:epoch:trainers:", epoch_cur.to_string().as_bytes()]);
     let trainers: Vec<Vec<u8>> = kv_get_trainers(env, &trainers_key).unwrap_or_default();
 
     // filter leaders: current trainers AND not peddlebike
@@ -575,7 +575,7 @@ fn next_pre_420(env: &mut ApplyEnv) {
 
     let leaders = get_sorted_leaders_excluding_removed(env, epoch_cur);
 
-    let trainers_key = bcat(&[b"bic:epoch:trainers:", &epoch_cur.to_string().as_bytes()]);
+    let trainers_key = bcat(&[b"bic:epoch:trainers:", epoch_cur.to_string().as_bytes()]);
     let trainers: Vec<Vec<u8>> = kv_get_trainers(env, &trainers_key).unwrap_or_default();
 
     let trainers_to_recv_emissions: Vec<_> =
@@ -595,7 +595,7 @@ fn get_sorted_leaders_excluding_removed(env: &ApplyEnv, epoch: u64) -> Vec<(Vec<
     use crate::consensus::consensus_kv::kv_get_prefix;
     use amadeus_utils::misc::TermExt;
 
-    let removed_key = bcat(&[b"bic:epoch:trainers:removed:", &epoch.to_string().as_bytes()]);
+    let removed_key = bcat(&[b"bic:epoch:trainers:removed:", epoch.to_string().as_bytes()]);
     let removed_trainers: Vec<Vec<u8>> = kv_get(env, &removed_key)
         .ok()
         .flatten()
@@ -669,7 +669,7 @@ fn store_new_trainers_for_next_epoch(env: &mut ApplyEnv, epoch_next: u64, new_va
     use crate::consensus::consensus_kv::kv_put;
     let term = amadeus_utils::misc::eetf_list_of_binaries(new_validators).unwrap_or_default();
 
-    let trainers_next_key = bcat(&[b"bic:epoch:trainers:", &epoch_next.to_string().as_bytes()]);
+    let trainers_next_key = bcat(&[b"bic:epoch:trainers:", epoch_next.to_string().as_bytes()]);
     let _ = kv_put(env, &trainers_next_key, &term);
 
     let height = format!("{:012}", env.caller_env.entry_height + 1);
