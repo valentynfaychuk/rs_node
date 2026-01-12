@@ -1,0 +1,44 @@
+# Minimal Dockerfile using pre-built binary
+# Use this for faster builds when you already have the binary compiled
+
+FROM debian:bookworm-slim
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    libzstd1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create amadeus user
+RUN useradd -m -u 1000 -s /bin/bash amadeus
+
+WORKDIR /home/amadeus
+
+# Copy the pre-built binary from build directory
+COPY build/amadeusd /usr/local/bin/amadeusd
+RUN chmod +x /usr/local/bin/amadeusd
+
+# Create data directory
+RUN mkdir -p /home/amadeus/.amadeusd-rs && \
+    chown -R amadeus:amadeus /home/amadeus
+
+# Switch to non-root user
+USER amadeus
+
+# Expose ports
+EXPOSE 36969/udp 3000/tcp
+
+# Environment variables
+ENV UDP_ADDR=0.0.0.0:36969 \
+    HTTP_PORT=3000 \
+    RUST_LOG=info \
+    WORKFOLDER=/home/amadeus/.amadeusd-rs
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${HTTP_PORT}/health || exit 1
+
+# Run the node
+ENTRYPOINT ["/usr/local/bin/amadeusd"]

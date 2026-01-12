@@ -1,0 +1,52 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: amadeus
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+
+# ConfigMap generator for custom configuration
+configMapGenerator:
+  - name: amadeus-config
+    behavior: merge
+    literals:
+      - UDP_ADDR=0.0.0.0:36969
+      - HTTP_PORT=3000
+      - RUST_LOG=info
+
+# Common labels for all resources
+commonLabels:
+  app.kubernetes.io/name: amadeus-node
+  app.kubernetes.io/component: blockchain-node
+  app.kubernetes.io/part-of: amadeus
+  confidential: "true"
+
+# Images to use
+images:
+  - name: amadeus-node
+    newName: localhost:5000/amadeus-node
+    newTag: latest
+
+# Patches
+patchesStrategicMerge:
+  # Add custom patches here if needed
+
+# Replicas
+replicas:
+  - name: amadeus-node
+    count: 1
+
+# Variables for runtime class selection
+vars:
+  - name: RUNTIME_CLASS
+    objref:
+      kind: ConfigMap
+      name: amadeus-config
+      apiVersion: v1
+    fieldref:
+      fieldpath: data.RUNTIME_CLASS

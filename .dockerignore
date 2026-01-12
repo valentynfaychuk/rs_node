@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts - IMPORTANT: exclude all target directories
+target
+**/target
+**/*.rs.bk
+**/*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Scripts
+scripts/
+deploy/
+
+# Test files
+tests/
+**/*_test.rs
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Gramine manifests (not needed in container)
+*.manifest*
+amadeusd.manifest*
+
+# Other
+.env
+.env.*
+*.log
+*.tmp
+
+# Package directories
+**/package

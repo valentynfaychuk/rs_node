@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amadeus-config
+  namespace: amadeus
+data:
+  # Node configuration
+  UDP_ADDR: "0.0.0.0:36969"
+  HTTP_PORT: "3000"
+  RUST_LOG: "info"
+  WORKFOLDER: "/home/amadeus/.amadeusd-rs"

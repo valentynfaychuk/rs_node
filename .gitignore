@@ -8,3 +8,19 @@ target/
 **/.env
 log
 **/*.wasm
+
+# Docker build artifacts
+build/
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+
+# Docker images
+amadeus-node-*.tar
+
+# Editor temporary files
+*.swp
+*.swo
+*~
+.*.swp

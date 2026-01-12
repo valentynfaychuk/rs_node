@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amadeus-node
+  namespace: amadeus
+  labels:
+    app: amadeus-node
+    confidential: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: amadeus-node
+  template:
+    metadata:
+      labels:
+        app: amadeus-node
+        confidential: "true"
+      annotations:
+        # Confidential Containers annotation for attestation
+        io.katacontainers.config.hypervisor.kernel_params: "agent.aa_kbc_params=cc_kbc::http://127.0.0.1:8006"
+    spec:
+      # Use Confidential Containers runtime class
+      # This will be created by the CoCo operator
+      # Options: kata-qemu-tdx, kata-qemu-sev, kata-clh-tdx, kata
+      runtimeClassName: kata-qemu-tdx
+
+      # Node selector for TEE-capable nodes
+      nodeSelector:
+        feature.node.kubernetes.io/cpu-sgx.enabled: "true"
+
+      # Security context for confidential workload
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+      - name: amadeus
+        image: amadeus-node:latest
+        imagePullPolicy: IfNotPresent
+
+        ports:
+        - name: p2p
+          containerPort: 36969
+          protocol: UDP
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+
+        envFrom:
+        - configMapRef:
+            name: amadeus-config
+
+        volumeMounts:
+        - name: data
+          mountPath: /home/amadeus/.amadeusd-rs
+
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+
+        # Liveness probe
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        # Readiness probe
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: amadeus-data
+
+      # Restart policy
+      restartPolicy: Always

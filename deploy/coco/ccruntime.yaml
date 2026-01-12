@@ -1,0 +1,79 @@
+apiVersion: confidentialcontainers.org/v1beta1
+kind: CcRuntime
+metadata:
+  name: ccruntime-amadeus
+  namespace: confidential-containers-system
+spec:
+  # Runtime configuration
+  runtimeName: kata
+
+  # Configuration for different TEE platforms
+  # Uncomment the platform you're using
+
+  # Intel TDX configuration
+  config:
+    installType: bundle
+    payloadImage: quay.io/kata-containers/kata-deploy:latest
+
+    # TDX-specific settings
+    tdxConfig:
+      enabled: true
+      # Firmware path for TDX
+      firmware: /usr/share/qemu/OVMF.fd
+
+    # Runtime class mappings
+    runtimeClasses:
+      - name: kata-qemu-tdx
+        nodeSelector:
+          matchLabels:
+            katacontainers.io/tdx: "true"
+        handler: kata-qemu-tdx
+        overhead:
+          podFixed:
+            memory: "350Mi"
+            cpu: "250m"
+        scheduling:
+          nodeSelector:
+            feature.node.kubernetes.io/cpu-tdx.enabled: "true"
+
+      - name: kata-qemu-sev
+        nodeSelector:
+          matchLabels:
+            katacontainers.io/sev: "true"
+        handler: kata-qemu-sev
+        overhead:
+          podFixed:
+            memory: "350Mi"
+            cpu: "250m"
+        scheduling:
+          nodeSelector:
+            feature.node.kubernetes.io/cpu-sev.enabled: "true"
+
+      - name: kata
+        nodeSelector:
+          matchLabels:
+            katacontainers.io/kata: "true"
+        handler: kata-qemu
+        overhead:
+          podFixed:
+            memory: "350Mi"
+            cpu: "250m"
+
+  # Pre-install checks
+  preInstall:
+    # Check for hardware support
+    checks:
+      - name: check-tdx
+        command: |
+          if [ -f /sys/firmware/tdx_seam/tdx_module_version ]; then
+            echo "TDX supported"
+            exit 0
+          fi
+          echo "TDX not supported on this node"
+          exit 1
+        nodeSelector:
+          feature.node.kubernetes.io/cpu-tdx.enabled: "true"
+
+  # Post-install verification
+  postInstall:
+    verify: true
